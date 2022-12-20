@@ -1,65 +1,20 @@
 using ReinforcementLearningEnvironments: CartPoleEnv
 using ReinforcementLearningBase: reset!, reward, state, action_space, is_terminated
 using Flux
-import StatsBase: sample
+using ArgParse
 
-const TOTAL_TIMESTEPS = 50_000
-const BUFFER_SIZE = 10_000
-const MIN_BUFF_SIZE = 200
-const TRAIN_FREQ = 10
-const TARGET_NET_FREQ = 100
-const BATCH_SIZE = 128
-const γ = 0.99
+include("../utils/buffers.jl")
+include("../utils/config_parser.jl")
 
-struct Transition{S}
-  state::S
-  action::Integer
-  reward::AbstractFloat
-  next_state::S
-  terminal::Bool
-end
 
-struct TransitionBatch{S}  # Trajectory?
-  states::Matrix{S}
-  actions::Vector{<:Integer}
-  rewards::Vector{<:AbstractFloat}
-  next_states::Matrix{S}
-  terminals::Vector{Bool}
-end
-
-struct ReplayBuffer
-  capacity::Int
-  data::AbstractVector{Transition}
-
-  function ReplayBuffer(capacity)
-    new(capacity, Vector{Transition}())
-  end
-end
-
-function add!(rb::ReplayBuffer, data::Transition)
-  if length(rb.data) > rb.capacity
-    pop!(rb.data)
-  end
-  prepend!(rb.data, [data])
-end
-
-function sample(rb::ReplayBuffer, batch_size::Int)
-  data = sample(rb.data, batch_size, replace=false)
-  # TODO: should this be done in one loop?
-  #  how does RL.jl do it?
-
-  #  should ReplayBuffer just hold separate arrays for each item? Or a hashtable of arrays
-  #  so you can add!(:action, action)
-  states = map(t -> t.state, data)
-  next_states = map(t -> t.next_state, data)
-  rewards = map(t -> t.reward, data)
-  actions = map(t -> t.action, data)
-  terminals = map(t -> t.terminal, data)
-
-  states = reduce(hcat, states)
-  next_states = reduce(hcat, next_states)
-
-  TransitionBatch(states, actions, rewards, next_states, terminals)
+Base.@kwdef struct Config
+  total_timesteps::Int = 50_000
+  buffer_size::Int64 = 10_000
+  min_buff_size::Int64 = 200
+  train_freq::Int64 = 10
+  target_net_freq::Int64 = 100
+  batch_size::Int64 = 120
+  γ::Float64 = 0.99
 end
 
 function linear_schedule(start_ϵ, end_ϵ, duration, t)
@@ -69,19 +24,20 @@ end
 
 
 function dqn()
-  env = CartPoleEnv()
+  config = ConfigParser.argparse_struct(Config())
+
+  env = CartPoleEnv()  # TODO make env configurable through argparse
+  # TODO: make layer size depend on env
   q_net = Chain(Dense(4, 120, relu), Dense(120, 84, relu), Dense(84, 2))
   opt = ADAM()
   target_net = deepcopy(q_net)
 
-  rb = ReplayBuffer(BUFFER_SIZE)
-
+  rb = Buffers.ReplayBuffer(config.buffer_size)
   ϵ_schedule = t -> linear_schedule(1.0, 0.05, 10_000, t)
-
   ep_rew = 0
 
   reset!(env)
-  for global_step in 1:TOTAL_TIMESTEPS
+  for global_step in 1:config.total_timesteps
     obs = deepcopy(state(env))  # state needs to be coppied otherwise state and next_state is the same
 
     ϵ = ϵ_schedule(global_step)
@@ -94,14 +50,14 @@ function dqn()
 
     env(action)
 
-    sart = Transition(
+    transition = Buffers.Transition(
       obs,
       action,
       reward(env),
       deepcopy(state(env)),
       is_terminated(env)
     )
-    add!(rb, sart)
+    Buffers.add!(rb, transition)
 
     ep_rew += reward(env)
     if is_terminated(env)
@@ -111,12 +67,12 @@ function dqn()
     end
 
 
-    if (global_step > MIN_BUFF_SIZE) && (global_step % TRAIN_FREQ == 0)
-      data = sample(rb, BATCH_SIZE)
+    if (global_step > config.min_buff_size) && (global_step % config.train_freq == 0)
+      data = Buffers.sample(rb, config.batch_size)
       actions = CartesianIndex.(data.actions, 1:length(data.actions))
 
       next_q = data.next_states |> target_net |> eachcol .|> maximum
-      td_target = data.rewards + γ * next_q .* (1.0 .- data.terminals)
+      td_target = data.rewards + config.γ * next_q .* (1.0 .- data.terminals)
 
       params = Flux.params(q_net)
       gs = gradient(params) do
@@ -127,7 +83,7 @@ function dqn()
 
       Flux.Optimise.update!(opt, params, gs)
 
-      if global_step % TARGET_NET_FREQ == 0
+      if global_step % config.target_net_freq == 0
         target_net = deepcopy(q_net)
       end
     end

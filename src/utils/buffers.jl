@@ -9,7 +9,7 @@ abstract type AbstractTransition end
 abstract type AbstractTrajectory end
 abstract type AbstractReplayBuffer end
 
-
+# Results from a single step in RL env
 struct Transition{S} <: AbstractTransition
   state::S
   action::Integer
@@ -18,6 +18,7 @@ struct Transition{S} <: AbstractTransition
   terminal::Bool
 end
 
+# A batch of transitions
 struct Trajectory{S} <: AbstractTrajectory
   states::Matrix{S}
   actions::Vector{<:Integer}
@@ -36,10 +37,12 @@ struct ReplayBuffer <: AbstractReplayBuffer
 end
 
 function add!(rb::ReplayBuffer, data::AbstractTransition)
+  """Add transisition to the replay buffer"""
   push!(rb.data, data)
 end
 
 function sample(rb::ReplayBuffer, batch_size::Int)
+  """Get a random batch of transitions (Trajectory) from the replay buffer"""
   data = sample(rb.data, batch_size, replace=false)
 
   # TODO: should this be done in one loop?

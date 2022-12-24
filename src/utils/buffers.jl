@@ -3,7 +3,7 @@ module Buffers
 import StatsBase: sample
 using DataStructures: CircularBuffer
 
-export Transition, Trajectory, ReplayBuffer, add!, sample
+export Transition, Trajectory, PGTransition, PGTrajectory, ReplayBuffer, ReplayQueue, add!, sample
 
 abstract type AbstractTransition end
 abstract type AbstractTrajectory end
@@ -27,16 +27,38 @@ struct Trajectory{S} <: AbstractTrajectory
   terminals::Vector{Bool}
 end
 
-struct ReplayBuffer <: AbstractReplayBuffer
-  capacity::Int
-  data::CircularBuffer{Transition}
+struct PGTransition{S} <: AbstractTransition
+  state::S
+  log_prob::AbstractFloat
+  reward::AbstractFloat
+  terminals::Bool
+end
 
-  function ReplayBuffer(capacity)
-    new(capacity, CircularBuffer{Transition}(capacity))
+struct PGTrajectory{S} <: AbstractTransition
+  state::Matrix{S}
+  log_probs::Matrix{<:AbstractFloat}
+  reward::Vector{AbstractFloat}
+  terminals::Vector{Bool}
+end
+
+struct ReplayBuffer{T} <: AbstractReplayBuffer where {T<:AbstractTransition}
+  capacity::Int
+  data::CircularBuffer{T}
+
+  function ReplayBuffer{T}(capacity) where {T<:AbstractTransition}
+    new{T}(capacity, CircularBuffer{T}(capacity))
   end
 end
 
-function add!(rb::ReplayBuffer, data::AbstractTransition)
+struct ReplayQueue{T} <: AbstractReplayBuffer where {T<:AbstractTransition}
+  data::Vector{T}
+
+  function ReplayQueue{T}() where {T<:AbstractTransition}
+    new{T}(Vector{T}())  # how to make this generic?
+  end
+end
+
+function add!(rb::AbstractReplayBuffer, data::AbstractTransition)
   """Add transisition to the replay buffer"""
   push!(rb.data, data)
 end
@@ -58,4 +80,20 @@ function sample(rb::ReplayBuffer, batch_size::Int)
 
   Trajectory(states, actions, rewards, next_states, terminals)
 end
+
+function sample(rb::ReplayQueue, batch_size::Int)
+  data = rb.data[1:batch_size]
+  rb.data = rb.data[batch_size+1:end]
+
+  states = map(t -> t.state, data)
+  log_probs = map(t -> t.log_prob, data)
+  rewards = map(t -> t.reward, data)
+  terminals = map(t -> t.terminal, data)
+
+  states = reduce(hcat, states)
+  log_probs = reduce(hcat, log_probs)
+
+  return PGTrajectory(states, log_probs, rewards, terminals)
+end
+
 end # module

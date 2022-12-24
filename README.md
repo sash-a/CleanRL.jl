@@ -14,5 +14,8 @@ Inspired by [CleanRL](https://github.com/vwxyzjn/cleanrl)
 ## TODO (Utils):
 * ~~General replay buffer~~
 * ~~CLI for hyperparameters~~
-* Support loggers
+* ~~Support loggers~~
 * GPU training
+* Vectorized envs
+* Plotting
+* Multi-loggers (file/console/Tensorboard)

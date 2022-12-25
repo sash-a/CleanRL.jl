@@ -1,15 +1,22 @@
 using ReinforcementLearningEnvironments: CartPoleEnv
 using ReinforcementLearningBase: reset!, reward, state, is_terminated, action_space, state_space, AbstractEnv
 using Flux
-using ArgParse
 
-using ReinforcementLearningBase
+using ArgParse
+using LoggingExtras: TeeLogger, FormatLogger, ConsoleLogger
+using LoggingFormats: JSON
+using TensorBoardLogger: TBLogger
+using Dates: now, format
+
+
 
 include("../utils/buffers.jl")
 include("../utils/config_parser.jl")
 
 
 Base.@kwdef struct Config
+  run_name::String = format(now(), "yy-mm-dd|HH:MM:SS")
+
   log_frequencey::Int = 1000
 
   total_timesteps::Int = 50_000
@@ -41,6 +48,10 @@ end
 
 function dqn()
   config = ConfigParser.argparse_struct(Config())
+  json_log_file = "logs/dqn|$(config.run_name).json"
+  tb_log_file = "logs/dqn|$(config.run_name)"
+  logger = TeeLogger(ConsoleLogger(), FormatLogger(JSON(), json_log_file; append=true), TBLogger(tb_log_file))
+  Base.global_logger(logger)  # set this logger to be the global logger
 
   env = CartPoleEnv()  # TODO make env configurable through argparse
 

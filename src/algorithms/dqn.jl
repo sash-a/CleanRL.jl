@@ -1,15 +1,17 @@
 using ReinforcementLearningEnvironments: CartPoleEnv
 using ReinforcementLearningBase: reset!, reward, state, is_terminated, action_space, state_space, AbstractEnv
 using Flux
-using ArgParse
 
-using ReinforcementLearningBase
+using Dates: now, format
 
 include("../utils/buffers.jl")
 include("../utils/config_parser.jl")
+include("../utils/logger.jl")
 
 
 Base.@kwdef struct Config
+  run_name::String = format(now(), "yy-mm-dd|HH:MM:SS")
+
   log_frequencey::Int = 1000
 
   total_timesteps::Int = 50_000
@@ -41,8 +43,9 @@ end
 
 function dqn()
   config = ConfigParser.argparse_struct(Config())
+  Logger.make_logger(config.run_name)
 
-  env = CartPoleEnv()  # TODO make env configurable through argparse
+  env = CartPoleEnv()  # TODO make env configurable through CLI
 
   q_net = make_nn(env)
   target_net = deepcopy(q_net)
@@ -58,7 +61,7 @@ function dqn()
   reset!(env)
   for global_step in 1:config.total_timesteps
     obs = deepcopy(state(env))  # state needs to be coppied otherwise state and next_state is the same
-
+    # action selection
     ϵ = ϵ_schedule(global_step)
     action = if rand() < ϵ
       env |> action_space |> rand
@@ -67,8 +70,9 @@ function dqn()
       argmax(qs)
     end
 
-    env(action)
+    env(action)  # step env
 
+    # add to buffer
     transition = Buffers.Transition(
       obs,
       action,

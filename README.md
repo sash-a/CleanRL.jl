@@ -4,11 +4,11 @@ Inspired by [CleanRL](https://github.com/vwxyzjn/cleanrl)
 
 
 ## TODO (Algorithms):
-* Simple PG
+* ~~Simple PG~~
 * Rainbow
+* PPO
 * DDPG
 * TRPO
-* PPO
 * SAC
 
 ## TODO (Utils):

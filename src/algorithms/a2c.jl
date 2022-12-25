@@ -2,7 +2,7 @@ using ReinforcementLearningEnvironments: CartPoleEnv
 using ReinforcementLearningBase: reset!, reward, state, is_terminated, action_space, state_space, AbstractEnv
 using Flux
 using ArgParse
-using StatsBase: sample, Weights, loglikelihood
+using StatsBase: sample, Weights, loglikelihood, mean
 using Distributions: Categorical
 
 
@@ -29,6 +29,18 @@ function make_nn(env::AbstractEnv)
   actor, critic
 end
 
+function discounted_future_rewards(rewards, terminals, final_value, γ)
+  future_rewards = zeros(eltype(rewards), size(rewards))
+  future_rewards[end] = final_value  # not sure if this is correct
+
+  # this assumes that the final state was terminal, how to fix?
+  for (i, (r, t)) in enumerate(zip(reverse(rewards), reverse(terminals)))
+    future_rewards[i] += t ? 0 : r + γ * future_rewards[i-1]
+  end
+
+  reverse(future_rewards)
+end
+
 function a2c()
   config = ConfigParser.argparse_struct(Config())
 
@@ -49,13 +61,12 @@ function a2c()
 
     ac_dist = Categorical(actor(obs))
     action = rand(ac_dist)
-    logprob = loglikelihood(ac_dist, action)
 
     env(action)
 
     transition = Buffers.PGTransition(
       obs,
-      logprob,
+      action,
       reward(env),
       is_terminated(env)
     )
@@ -67,58 +78,42 @@ function a2c()
 
     if is_terminated(env)
       @info "Episode Statistics" episode_return episode_length
-      episode_length, episode_return = 0, 0
 
       reset!(env)
+
+      # TODO: method?
+      #  learn at regular interval instead of after episode?
 
       # learn
       data = sample(rb, episode_length)
       values = critic(data.states)
-      discounted_rewards = discount_rewards(data.rewards)
-      advantage = discounted_rewards - values
+      discounted_rewards = discounted_future_rewards(data.rewards, data.terminals, values[end], config.gamma)
+      advantage = discounted_rewards - vec(values)
 
       # actor update
       actor_params = Flux.params(actor)
-      actor_gs = Flux.gradient(actor_params) do
-        data.logprob * advantage
+      actor_loss, actor_gs = Flux.withgradient(actor_params) do
+        ac_dists = data.states |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
+        log_probs = loglikelihood.(ac_dists, data.actions)
+        -mean(log_probs .* advantage)
       end
-      Flux.Optimiser.update!(opt, actor_params, actor_gs)
+      Flux.Optimise.update!(opt, actor_params, actor_gs)
 
       # critic update
       critic_params = Flux.params(critic)
-      critic_gs = Flux.gradient(critic_params) do
-        advantage^2
+      critic_loss, critic_gs = Flux.withgradient(critic_params) do
+        # TODO: how to get advantage out of this block so only need to calc it once?
+        values = critic(data.states)
+        advantage = discounted_rewards - vec(values)
+        mean(advantage .^ 2)  # TODO: this loss is *really* high can't be normal?
       end
-      Flux.Optimiser.update(opt, critic_params, critic_gs)
-    end
+      Flux.Optimise.update!(opt, critic_params, critic_gs)
 
-    # # Learning
-    # if (global_step > config.min_buff_size) && (global_step % config.train_freq == 0)
-    #   data = Buffers.sample(rb, config.batch_size)
-    #   # Convert actions to CartesianIndexes so they can be used to index matricies
-    #   actions = CartesianIndex.(data.actions, 1:length(data.actions))
-    #
-    #   next_q = data.next_states |> target_net |> eachcol .|> maximum
-    #   td_target = data.rewards + config.gamma * next_q .* (1.0 .- data.terminals)
-    #
-    #   # Get grads and update model
-    #   params = Flux.params(q_net)
-    #   loss, gs = Flux.withgradient(params) do
-    #     q = data.states |> q_net
-    #     q = q[actions]
-    #     Flux.mse(td_target, q)
-    #   end
-    #   Flux.Optimise.update!(opt, params, gs)
-    #
-    #   if global_step % config.target_net_freq == 0
-    #     target_net = deepcopy(q_net)
-    #   end
-    #
-    #   if global_step % config.log_frequencey == 0
-    #     steps_per_second = trunc(global_step / (time() - start_time))
-    #     @info "Training statistics" loss steps_per_second
-    #   end
-    # end
+      # reset these at end of episode
+      episode_length, episode_return = 0, 0
+
+      @info "Training Statistics" actor_loss critic_loss
+    end
   end
 end
 

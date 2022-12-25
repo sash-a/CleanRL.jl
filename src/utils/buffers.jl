@@ -27,17 +27,18 @@ struct Trajectory{S} <: AbstractTrajectory
   terminals::Vector{Bool}
 end
 
+# Could combine these into 1 type if we made next states optional somehow
 struct PGTransition{S} <: AbstractTransition
   state::S
-  log_prob::AbstractFloat
+  action::Integer
   reward::AbstractFloat
-  terminals::Bool
+  terminal::Bool
 end
 
 struct PGTrajectory{S} <: AbstractTransition
-  state::Matrix{S}
-  log_probs::Matrix{<:AbstractFloat}
-  reward::Vector{AbstractFloat}
+  states::Matrix{S}
+  actions::Vector{<:Integer}
+  rewards::Vector{<:AbstractFloat}
   terminals::Vector{Bool}
 end
 
@@ -82,18 +83,16 @@ function sample(rb::ReplayBuffer, batch_size::Int)
 end
 
 function sample(rb::ReplayQueue, batch_size::Int)
-  data = rb.data[1:batch_size]
-  rb.data = rb.data[batch_size+1:end]
+  data = splice!(rb.data, 1:batch_size)
 
   states = map(t -> t.state, data)
-  log_probs = map(t -> t.log_prob, data)
+  actions = map(t -> t.action, data)
   rewards = map(t -> t.reward, data)
   terminals = map(t -> t.terminal, data)
 
   states = reduce(hcat, states)
-  log_probs = reduce(hcat, log_probs)
 
-  return PGTrajectory(states, log_probs, rewards, terminals)
+  return PGTrajectory(states, actions, rewards, terminals)
 end
 
 end # module

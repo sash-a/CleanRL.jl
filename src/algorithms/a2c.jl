@@ -1,19 +1,23 @@
 using ReinforcementLearningEnvironments: CartPoleEnv
 using ReinforcementLearningBase: reset!, reward, state, is_terminated, action_space, state_space, AbstractEnv
 using Flux
-using ArgParse
+
 using StatsBase: sample, Weights, loglikelihood, mean
 using Distributions: Categorical
 
+using Dates: now, format
 
 include("../utils/buffers.jl")
 include("../utils/config_parser.jl")
+include("../utils/logger.jl")
 
 
 Base.@kwdef struct Config
+  run_name::String = format(now(), "yy-mm-dd|HH:MM:SS")
+
   log_frequencey::Int = 1000
 
-  total_timesteps::Int = 100_000
+  total_timesteps::Int = 1_000_000
 
   batch_size::Int64 = 120
   gamma::Float64 = 0.99
@@ -29,10 +33,13 @@ function make_nn(env::AbstractEnv)
   actor, critic
 end
 
-function discounted_future_rewards(rewards::Vector{T}, terminals::Vector{Bool}, final_value::T, γ::T) where {T<:AbstractFloat}
+function discounted_future_rewards(rewards::Vector{T}, terminals::Vector{Bool}, γ::T) where {T<:AbstractFloat}
+  # TODO: this probably doesn't work with sequences/incomplete episodes
+  #  If an episode doesn't complete then early actions will not get the full reward 
+  #  from an episode as it will not be in the sequence...
+  #  Fix this with a final value + finding the last terminal??
   future_rewards = zeros(eltype(rewards), size(rewards))
   future_rewards[1] = last(rewards) * last(terminals)
-  # future_rewards[1] = (final_value + last(rewards)) * last(terminals) # not sure if this is correct?
 
   # would be nice if the reverse was also a view
   reversed_rewards = reverse(@view rewards[1:end-1])
@@ -44,8 +51,13 @@ function discounted_future_rewards(rewards::Vector{T}, terminals::Vector{Bool}, 
   reverse(future_rewards)
 end
 
+# TODO:
+#  training freq
+#  logging freq
+#  harder envs
 function a2c()
   config = ConfigParser.argparse_struct(Config())
+  Logger.make_logger("a2c|$(config.run_name)")
 
   env = CartPoleEnv()  # TODO make env configurable through argparse
 
@@ -90,7 +102,7 @@ function a2c()
       # learn
       data = sample(rb, episode_length)
       values = critic(data.states)
-      discounted_rewards = discounted_future_rewards(data.rewards, data.terminals, values[end], config.gamma)
+      discounted_rewards = discounted_future_rewards(data.rewards, data.terminals, config.gamma)
       advantage = discounted_rewards - vec(values)
 
       # actor update
@@ -108,14 +120,15 @@ function a2c()
         # TODO: how to get advantage out of this block so only need to calc it once?
         values = critic(data.states)
         advantage = discounted_rewards - vec(values)
-        mean(advantage .^ 2)  # TODO: this loss is *really* high can't be normal?
+        mean(advantage .^ 2)  # TODO: this loss is *really* high, can't be normal?
       end
       Flux.Optimise.update!(opt, critic_params, critic_gs)
 
       # reset these at end of episode
       episode_length, episode_return = 0, 0
 
-      @info "Training Statistics" actor_loss critic_loss
+      steps_per_second = trunc(global_step / (time() - start_time))
+      @info "Training Statistics" actor_loss critic_loss steps_per_second
     end
   end
 end

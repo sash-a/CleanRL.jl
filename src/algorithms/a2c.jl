@@ -13,7 +13,7 @@ include("../utils/config_parser.jl")
 Base.@kwdef struct Config
   log_frequencey::Int = 1000
 
-  total_timesteps::Int = 50_000
+  total_timesteps::Int = 100_000
 
   batch_size::Int64 = 120
   gamma::Float64 = 0.99
@@ -29,13 +29,16 @@ function make_nn(env::AbstractEnv)
   actor, critic
 end
 
-function discounted_future_rewards(rewards, terminals, final_value, γ)
+function discounted_future_rewards(rewards::Vector{T}, terminals::Vector{Bool}, final_value::T, γ::T) where {T<:AbstractFloat}
   future_rewards = zeros(eltype(rewards), size(rewards))
-  future_rewards[end] = final_value  # not sure if this is correct
+  future_rewards[1] = last(rewards) * last(terminals)
+  # future_rewards[1] = (final_value + last(rewards)) * last(terminals) # not sure if this is correct?
 
-  # this assumes that the final state was terminal, how to fix?
-  for (i, (r, t)) in enumerate(zip(reverse(rewards), reverse(terminals)))
-    future_rewards[i] += t ? 0 : r + γ * future_rewards[i-1]
+  # would be nice if the reverse was also a view
+  reversed_rewards = reverse(@view rewards[1:end-1])
+  reversed_terminals = reverse(@view terminals[1:end-1])
+  for (i, (r, t)) in enumerate(zip(reversed_rewards, reversed_terminals))
+    future_rewards[i+1] += t ? 0 : r + γ * future_rewards[i]
   end
 
   reverse(future_rewards)

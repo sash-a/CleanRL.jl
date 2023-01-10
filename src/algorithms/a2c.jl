@@ -18,6 +18,7 @@ Base.@kwdef struct Config
   log_frequencey::Int = 1000
 
   total_timesteps::Int = 1_000_000
+  epoch_length::Int = 200
 
   batch_size::Int64 = 120
   gamma::Float64 = 0.99
@@ -33,19 +34,14 @@ function make_nn(env::AbstractEnv)
   actor, critic
 end
 
-function discounted_future_rewards(rewards::Vector{T}, terminals::Vector{Bool}, γ::T) where {T<:AbstractFloat}
-  # TODO: this probably doesn't work with sequences/incomplete episodes
-  #  If an episode doesn't complete then early actions will not get the full reward 
-  #  from an episode as it will not be in the sequence...
-  #  Fix this with a final value + finding the last terminal??
+function discounted_future_rewards(rewards::Vector{T}, terminals::Vector{Bool}, final_value::T, γ::T) where {T<:AbstractFloat}
   future_rewards = zeros(eltype(rewards), size(rewards))
-  future_rewards[1] = last(rewards) * last(terminals)
+  future_rewards[1] = last(terminals) ? 0.0 : last(rewards) + γ * final_value
 
-  # would be nice if the reverse was also a view
-  reversed_rewards = reverse(@view rewards[1:end-1])
+  reversed_rewards = reverse(@view rewards[1:end-1])  # would be nice if the reverse was also a view
   reversed_terminals = reverse(@view terminals[1:end-1])
   for (i, (r, t)) in enumerate(zip(reversed_rewards, reversed_terminals))
-    future_rewards[i+1] += t ? 0 : r + γ * future_rewards[i]
+    future_rewards[i+1] += t ? 0.0 : r + γ * future_rewards[i]
   end
 
   reverse(future_rewards)
@@ -55,6 +51,10 @@ end
 #  training freq
 #  logging freq
 #  harder envs
+#  mulitple V train steps
+#  normalise advantage
+#  lr
+#  gae
 function a2c()
   config = ConfigParser.argparse_struct(Config())
   Logger.make_logger("a2c|$(config.run_name)")
@@ -93,17 +93,24 @@ function a2c()
 
     if is_terminated(env)
       @info "Episode Statistics" episode_return episode_length
-
+      episode_length, episode_return = 0, 0
       reset!(env)
+    end
 
-      # TODO: method?
-      #  learn at regular interval instead of after episode?
+    # if is_terminated && enough episodes
+    if global_step % config.epoch_length == 0  # learn
+      data = sample(rb, length(rb.data))  # get all the data from the buffer
+      final_value = data.states |> eachcol |> last |> critic |> first
+      discounted_rewards = discounted_future_rewards(data.rewards, data.terminals, final_value, config.gamma)
 
-      # learn
-      data = sample(rb, episode_length)
-      values = critic(data.states)
-      discounted_rewards = discounted_future_rewards(data.rewards, data.terminals, config.gamma)
-      advantage = discounted_rewards - vec(values)
+      advantage = []
+      critic_params = Flux.params(critic)
+      critic_loss, critic_gs = Flux.withgradient(critic_params) do
+        values = critic(data.states)
+        advantage = discounted_rewards - vec(values)
+        mean(advantage .^ 2)  # TODO: this loss is *really* high, can't be normal?
+      end
+      Flux.Optimise.update!(opt, critic_params, critic_gs)
 
       # actor update
       actor_params = Flux.params(actor)
@@ -113,19 +120,6 @@ function a2c()
         -mean(log_probs .* advantage)
       end
       Flux.Optimise.update!(opt, actor_params, actor_gs)
-
-      # critic update
-      critic_params = Flux.params(critic)
-      critic_loss, critic_gs = Flux.withgradient(critic_params) do
-        # TODO: how to get advantage out of this block so only need to calc it once?
-        values = critic(data.states)
-        advantage = discounted_rewards - vec(values)
-        mean(advantage .^ 2)  # TODO: this loss is *really* high, can't be normal?
-      end
-      Flux.Optimise.update!(opt, critic_params, critic_gs)
-
-      # reset these at end of episode
-      episode_length, episode_return = 0, 0
 
       steps_per_second = trunc(global_step / (time() - start_time))
       @info "Training Statistics" actor_loss critic_loss steps_per_second

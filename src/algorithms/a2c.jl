@@ -47,7 +47,7 @@ function a2c()
 
   env = CartPoleEnv()  # TODO make env configurable through argparse
 
-  actor, critic = Networks.make_nn(env)
+  actor, critic = Networks.make_actor_critic_nn(env)
   opt = ADAM()
 
   rb = Buffers.ReplayQueue{Buffers.PGTransition}()

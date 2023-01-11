@@ -4,15 +4,19 @@ Inspired by [CleanRL](https://github.com/vwxyzjn/cleanrl)
 
 
 ## TODO (Algorithms):
-* Simple PG
+* ~~Simple DQN~~
+* ~~A2C~~
 * Rainbow
+* PPO
 * DDPG
 * TRPO
-* PPO
 * SAC
 
 ## TODO (Utils):
 * ~~General replay buffer~~
 * ~~CLI for hyperparameters~~
-* Support loggers
+* ~~Support loggers~~
 * GPU training
+* Vectorized envs
+* ~~Plotting~~
+* ~~Multi-loggers (file/console/Tensorboard)~~

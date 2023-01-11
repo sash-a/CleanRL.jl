@@ -116,7 +116,7 @@ function dqn()
 
       if global_step % config.log_frequencey == 0
         steps_per_second = trunc(global_step / (time() - start_time))
-        @info "Training statistics" loss steps_per_second
+        @info "Training Statistics" loss steps_per_second
       end
     end
   end

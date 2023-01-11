@@ -3,7 +3,7 @@ module Buffers
 import StatsBase: sample
 using DataStructures: CircularBuffer
 
-export Transition, Trajectory, ReplayBuffer, add!, sample
+export Transition, Trajectory, PGTransition, PGTrajectory, ReplayBuffer, ReplayQueue, add!, sample
 
 abstract type AbstractTransition end
 abstract type AbstractTrajectory end
@@ -27,16 +27,39 @@ struct Trajectory{S} <: AbstractTrajectory
   terminals::Vector{Bool}
 end
 
-struct ReplayBuffer <: AbstractReplayBuffer
-  capacity::Int
-  data::CircularBuffer{Transition}
+# Could combine these into 1 type if we made next states optional somehow
+struct PGTransition{S} <: AbstractTransition
+  state::S
+  action::Integer
+  reward::AbstractFloat
+  terminal::Bool
+end
 
-  function ReplayBuffer(capacity)
-    new(capacity, CircularBuffer{Transition}(capacity))
+struct PGTrajectory{S} <: AbstractTransition
+  states::Matrix{S}
+  actions::Vector{<:Integer}
+  rewards::Vector{<:AbstractFloat}
+  terminals::Vector{Bool}
+end
+
+struct ReplayBuffer{T} <: AbstractReplayBuffer where {T<:AbstractTransition}
+  capacity::Int
+  data::CircularBuffer{T}
+
+  function ReplayBuffer{T}(capacity) where {T<:AbstractTransition}
+    new{T}(capacity, CircularBuffer{T}(capacity))
   end
 end
 
-function add!(rb::ReplayBuffer, data::AbstractTransition)
+struct ReplayQueue{T} <: AbstractReplayBuffer where {T<:AbstractTransition}
+  data::Vector{T}
+
+  function ReplayQueue{T}() where {T<:AbstractTransition}
+    new{T}(Vector{T}())  # how to make this generic?
+  end
+end
+
+function add!(rb::AbstractReplayBuffer, data::AbstractTransition)
   """Add transisition to the replay buffer"""
   push!(rb.data, data)
 end
@@ -58,4 +81,18 @@ function sample(rb::ReplayBuffer, batch_size::Int)
 
   Trajectory(states, actions, rewards, next_states, terminals)
 end
+
+function sample(rb::ReplayQueue, batch_size::Int)
+  data = splice!(rb.data, 1:batch_size)
+
+  states = map(t -> t.state, data)
+  actions = map(t -> t.action, data)
+  rewards = map(t -> t.reward, data)
+  terminals = map(t -> t.terminal, data)
+
+  states = reduce(hcat, states)
+
+  return PGTrajectory(states, actions, rewards, terminals)
+end
+
 end # module

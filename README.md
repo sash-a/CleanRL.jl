@@ -4,7 +4,8 @@ Inspired by [CleanRL](https://github.com/vwxyzjn/cleanrl)
 
 
 ## TODO (Algorithms):
-* ~~Simple PG~~
+* ~~Simple DQN~~
+* ~~A2C~~
 * Rainbow
 * PPO
 * DDPG
@@ -17,5 +18,5 @@ Inspired by [CleanRL](https://github.com/vwxyzjn/cleanrl)
 * ~~Support loggers~~
 * GPU training
 * Vectorized envs
-* Plotting
-* Multi-loggers (file/console/Tensorboard)
+* ~~Plotting~~
+* ~~Multi-loggers (file/console/Tensorboard)~~

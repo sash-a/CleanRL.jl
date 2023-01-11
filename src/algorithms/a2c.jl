@@ -1,7 +1,7 @@
 using ReinforcementLearningEnvironments: CartPoleEnv
 using ReinforcementLearningBase: reset!, reward, state, is_terminated, action_space, state_space, AbstractEnv
-using Flux
 
+using Flux
 using StatsBase: sample, Weights, loglikelihood, mean
 using Distributions: Categorical
 
@@ -10,29 +10,18 @@ using Dates: now, format
 include("../utils/buffers.jl")
 include("../utils/config_parser.jl")
 include("../utils/logger.jl")
+include("../utils/networks.jl")
 
 
 Base.@kwdef struct Config
   run_name::String = format(now(), "yy-mm-dd|HH:MM:SS")
 
-  log_frequencey::Int = 1000
+  total_timesteps::Int = 500_000
+  min_replay_size::Int = 512
 
-  total_timesteps::Int = 1_000_000
-  epoch_length::Int = 200
-
-  batch_size::Int64 = 120
   gamma::Float64 = 0.99
 end
 
-function make_nn(env::AbstractEnv)
-  in_size = length(state_space(env).s)
-  out_size = length(action_space(env).s)
-  ob_net = Chain(Dense(in_size, 120, relu), Dense(120, 84, relu))
-  actor = Chain(ob_net, Dense(84, out_size), softmax)
-  critic = Chain(ob_net, Dense(84, 1))
-
-  actor, critic
-end
 
 function discounted_future_rewards(rewards::Vector{T}, terminals::Vector{Bool}, final_value::T, γ::T) where {T<:AbstractFloat}
   future_rewards = zeros(eltype(rewards), size(rewards))
@@ -48,20 +37,17 @@ function discounted_future_rewards(rewards::Vector{T}, terminals::Vector{Bool}, 
 end
 
 # TODO:
-#  training freq
-#  logging freq
-#  harder envs
+#  test harder envs
 #  mulitple V train steps
 #  normalise advantage
 #  lr
-#  gae
 function a2c()
   config = ConfigParser.argparse_struct(Config())
   Logger.make_logger("a2c|$(config.run_name)")
 
   env = CartPoleEnv()  # TODO make env configurable through argparse
 
-  actor, critic = make_nn(env)
+  actor, critic = Networks.make_nn(env)
   opt = ADAM()
 
   rb = Buffers.ReplayQueue{Buffers.PGTransition}()
@@ -72,8 +58,8 @@ function a2c()
   start_time = time()
   reset!(env)
   for global_step in 1:config.total_timesteps
-    obs = deepcopy(state(env))  # state needs to be coppied otherwise state and next_state is the same
-
+    # state needs to be coppied otherwise each loop will overwrite ref in replay buffer
+    obs = deepcopy(state(env))
     ac_dist = Categorical(actor(obs))
     action = rand(ac_dist)
 
@@ -92,38 +78,41 @@ function a2c()
     episode_length += 1
 
     if is_terminated(env)
-      @info "Episode Statistics" episode_return episode_length
+      if length(rb.data) > config.min_replay_size  # training
+        data = sample(rb, length(rb.data))  # get all the data from the buffer
+        final_value = data.states |> eachcol |> last |> critic |> first
+        discounted_rewards = discounted_future_rewards(data.rewards, data.terminals, final_value, config.gamma)
+
+        # critic update
+        advantage = []
+        critic_params = Flux.params(critic)
+        critic_loss, critic_gs = Flux.withgradient(critic_params) do
+          values = critic(data.states)
+          advantage = discounted_rewards - vec(values)
+          mean(advantage .^ 2)  # TODO: this loss is *really* high, is that normal?
+        end
+        Flux.Optimise.update!(opt, critic_params, critic_gs)
+
+        # actor update
+        actor_params = Flux.params(actor)
+        actor_loss, actor_gs = Flux.withgradient(actor_params) do
+          ac_dists = data.states |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
+          log_probs = loglikelihood.(ac_dists, data.actions)
+          -mean(log_probs .* advantage)
+        end
+        Flux.Optimise.update!(opt, actor_params, actor_gs)
+
+        # logging
+        steps_per_second = trunc(global_step / (time() - start_time))
+        @info "Training Statistics" actor_loss critic_loss steps_per_second
+        @info "Episode Statistics" episode_return episode_length
+      end
+
+      # reset counters
       episode_length, episode_return = 0, 0
       reset!(env)
     end
 
-    # if is_terminated && enough episodes
-    if global_step % config.epoch_length == 0  # learn
-      data = sample(rb, length(rb.data))  # get all the data from the buffer
-      final_value = data.states |> eachcol |> last |> critic |> first
-      discounted_rewards = discounted_future_rewards(data.rewards, data.terminals, final_value, config.gamma)
-
-      advantage = []
-      critic_params = Flux.params(critic)
-      critic_loss, critic_gs = Flux.withgradient(critic_params) do
-        values = critic(data.states)
-        advantage = discounted_rewards - vec(values)
-        mean(advantage .^ 2)  # TODO: this loss is *really* high, can't be normal?
-      end
-      Flux.Optimise.update!(opt, critic_params, critic_gs)
-
-      # actor update
-      actor_params = Flux.params(actor)
-      actor_loss, actor_gs = Flux.withgradient(actor_params) do
-        ac_dists = data.states |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
-        log_probs = loglikelihood.(ac_dists, data.actions)
-        -mean(log_probs .* advantage)
-      end
-      Flux.Optimise.update!(opt, actor_params, actor_gs)
-
-      steps_per_second = trunc(global_step / (time() - start_time))
-      @info "Training Statistics" actor_loss critic_loss steps_per_second
-    end
   end
 end
 

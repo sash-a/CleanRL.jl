@@ -19,11 +19,15 @@ Base.@kwdef struct Config
   total_timesteps::Int = 500_000
   min_replay_size::Int = 512
 
-  gamma::Float64 = 0.99
-  lambda::Float64 = 0.9  # need a good value
+  lr::Float32 = 3e-4
+  gamma::Float32 = 0.99
+  lambda::Float32 = 0.95
+  epochs::Int32 = 5
+  minibatch_szie::Int32 = 32
 
-  critic_loss_weight::Float64 = 0.9  # need a good value
-  entropy_loss_weight::Float64 = 0.1  # need a good value
+  critic_loss_weight::Float32 = 0.9
+  entropy_loss_weight::Float32 = 0.01
+  clipping_epsilon::Float32 = 0.2
 end
 
 

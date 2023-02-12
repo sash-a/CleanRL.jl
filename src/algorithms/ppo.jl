@@ -20,9 +20,14 @@ Base.@kwdef struct Config
   min_replay_size::Int = 512
 
   gamma::Float64 = 0.99
+  lambda::Float64 = 0.9  # need a good value
+
+  critic_loss_weight::Float64 = 0.9  # need a good value
+  entropy_loss_weight::Float64 = 0.1  # need a good value
 end
 
 
+# TODO: GAE
 function discounted_future_rewards(rewards::Vector{T}, terminals::Vector{Bool}, final_value::T, γ::T) where {T<:AbstractFloat}
   future_rewards = zeros(eltype(rewards), size(rewards))
   future_rewards[1] = last(terminals) ? 0.0 : last(rewards) + γ * final_value
@@ -36,19 +41,48 @@ function discounted_future_rewards(rewards::Vector{T}, terminals::Vector{Bool}, 
   reverse(future_rewards)
 end
 
-# TODO:
-#  test harder envs
-#  mulitple V train steps
-#  normalise advantage
-#  lr
-function a2c()
+function learn!(rb::Buffers.ReplayQueue{Buffers.PGTransition}, actor::Chain, critic::Chain, opt::Adam, config::Config)
+  data = sample(rb, length(rb.data))  # get all the data from the buffer
+  # TODO:
+  # [ ] minibatching
+  # [ ] multiple train loops
+  # [ ] clipping loss
+  # [x] value loss
+  # [ ] entropy
+  final_value = data.states |> eachcol |> last |> critic |> first
+  discounted_rewards = discounted_future_rewards(data.rewards, data.terminals, final_value, config.gamma)
+
+  advantage = []
+  params = Flux.params(actor, critic)
+  loss, gs = Flux.withgradient(params) do
+    # critic loss
+    values = critic(data.states)
+    advantage = discounted_rewards - vec(values)
+    critic_loss = mean(advantage .^ 2)
+
+    # actor loss -> TODO: ppo's clipping loss
+    ac_dists = data.states |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
+    log_probs = loglikelihood.(ac_dists, data.actions)
+    actor_loss = -mean(log_probs .* advantage)
+
+    # TODO: entropy
+    entropy = 0
+
+    actor_loss - config.critic_loss_weight * critic_loss + config.entropy_loss_weight * entropy
+  end
+  Flux.Optimise.update!(opt, params, gs)
+
+  loss
+end
+
+function ppo()
   config = ConfigParser.argparse_struct(Config())
-  Logger.make_logger("a2c|$(config.run_name)")
+  Logger.make_logger("ppo|$(config.run_name)")
 
   env = CartPoleEnv()  # TODO make env configurable through argparse
 
   actor, critic = Networks.make_actor_critic_nn(env)
-  opt = ADAM()  # two opts?
+  opt = Adam()  # one opt per network?
 
   rb = Buffers.ReplayQueue{Buffers.PGTransition}()
 
@@ -78,33 +112,12 @@ function a2c()
     episode_length += 1
 
     if is_terminated(env)
-      if length(rb.data) > config.min_replay_size  # training
-        data = sample(rb, length(rb.data))  # get all the data from the buffer
-        final_value = data.states |> eachcol |> last |> critic |> first
-        discounted_rewards = discounted_future_rewards(data.rewards, data.terminals, final_value, config.gamma)
-
-        # critic update
-        advantage = []
-        critic_params = Flux.params(critic)
-        critic_loss, critic_gs = Flux.withgradient(critic_params) do
-          values = critic(data.states)
-          advantage = discounted_rewards - vec(values)
-          mean(advantage .^ 2)  # TODO: this loss is *really* high, is that normal?
-        end
-        Flux.Optimise.update!(opt, critic_params, critic_gs)
-
-        # actor update
-        actor_params = Flux.params(actor)
-        actor_loss, actor_gs = Flux.withgradient(actor_params) do
-          ac_dists = data.states |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
-          log_probs = loglikelihood.(ac_dists, data.actions)
-          -mean(log_probs .* advantage)
-        end
-        Flux.Optimise.update!(opt, actor_params, actor_gs)
-
+      if length(rb.data) > config.min_replay_size
+        # training
+        loss = learn!(rb, actor, critic, opt, config)
         # logging
         steps_per_second = trunc(global_step / (time() - start_time))
-        @info "Training Statistics" actor_loss critic_loss steps_per_second
+        @info "Training Statistics" loss steps_per_second
         @info "Episode Statistics" episode_return episode_length
       end
 
@@ -116,4 +129,4 @@ function a2c()
   end
 end
 
-@time a2c()
+@time ppo()

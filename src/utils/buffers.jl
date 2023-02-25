@@ -76,6 +76,8 @@ function sample(rb::ReplayBuffer, batch_size::Int)
   actions = map(t -> t.action, data)
   terminals = map(t -> t.terminal, data)
 
+  # This is probably quite inefficient, should probably just store replay in 
+  #  separate vectors/matricies?
   states = reduce(hcat, states)
   next_states = reduce(hcat, next_states)
 

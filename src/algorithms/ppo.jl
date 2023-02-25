@@ -31,18 +31,30 @@ Base.@kwdef struct Config
 end
 
 
-# TODO: GAE
-function discounted_future_rewards(rewards::Vector{T}, terminals::Vector{Bool}, final_value::T, γ::T) where {T<:AbstractFloat}
-  future_rewards = zeros(eltype(rewards), size(rewards))
-  future_rewards[1] = last(terminals) ? 0.0 : last(rewards) + γ * final_value
+function gae(values::Vector{T}, rewards::Vector{T}, terminals::Vector{T}, γ::T, λ::T) where {T<:AbstractFloat}
+  """
+  Generalized advantage estimation.
 
-  reversed_rewards = reverse(@view rewards[1:end-1])  # would be nice if the reverse was also a view
-  reversed_terminals = reverse(@view terminals[1:end-1])
-  for (i, (r, t)) in enumerate(zip(reversed_rewards, reversed_terminals))
-    future_rewards[i+1] += t ? 0.0 : r + γ * future_rewards[i]
+  Args:
+    values: [0, k]
+    rewards: [1, k]
+    terminals: [1,k]
+    γ: gamma/discount
+    λ: gae lambda
+
+  Returns: 
+   advatages [0, k-1]
+  """
+  advantages = similar(rewards)
+  gae = 0.0
+  for t in length(rewards):-1:1
+    δ = rewards[t] + terminals[t] * values[t+1] - values[t]
+    gae = δ + γ * λ * terminals[t] * gae
+    advantages[t] = gae
   end
 
-  reverse(future_rewards)
+  # value target = advantages + values[1:end-1]
+  advantages
 end
 
 function learn!(rb::Buffers.ReplayQueue{Buffers.PGTransition}, actor::Chain, critic::Chain, opt::Adam, config::Config)
@@ -133,4 +145,4 @@ function ppo()
   end
 end
 
-@time ppo()
+# @time ppo()

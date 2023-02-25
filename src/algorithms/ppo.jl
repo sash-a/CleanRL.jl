@@ -65,15 +65,13 @@ function learn!(rb::Buffers.ReplayQueue{Buffers.PGTransition}, actor::Chain, cri
   # [ ] clipping loss
   # [x] value loss
   # [ ] entropy
-  final_value = data.states |> eachcol |> last |> critic |> first
-  discounted_rewards = discounted_future_rewards(data.rewards, data.terminals, final_value, config.gamma)
-
-  advantage = []
   params = Flux.params(actor, critic)
   loss, gs = Flux.withgradient(params) do
+    # chain rules: ignore derivative for stopping grads
     # critic loss
     values = critic(data.states)
-    advantage = discounted_rewards - vec(values)
+    advantage = gae(values, data.rewards[2:end], data.terminals[2:end], config.gamma, config.lambda)
+
     critic_loss = mean(advantage .^ 2)
 
     # actor loss -> TODO: ppo's clipping loss
@@ -117,7 +115,7 @@ function ppo()
 
     transition = Buffers.PGTransition(
       obs,
-      action,
+      action,  # add ac_dist for ppo to compute old log prob
       reward(env),
       is_terminated(env)
     )

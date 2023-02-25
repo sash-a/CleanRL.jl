@@ -1,3 +1,6 @@
+# TODO this needs to be made cleaner with some julia magic
+# PG transitions need to take actions or log probs...maybe just log probs...or both?
+# Possibly just copy rl.jl?
 module Buffers
 
 import StatsBase: sample
@@ -37,7 +40,7 @@ end
 
 struct PGTrajectory{S} <: AbstractTransition
   states::Matrix{S}
-  actions::Vector{<:Integer}
+  actions::Vector{<:Number}
   rewards::Vector{<:AbstractFloat}
   terminals::Vector{Bool}
 end

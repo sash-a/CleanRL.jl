@@ -83,28 +83,27 @@ function a2c()
         final_value = data.states |> eachcol |> last |> critic |> first
         discounted_rewards = discounted_future_rewards(data.rewards, data.terminals, final_value, config.gamma)
 
-        # critic update
         advantage = []
-        critic_params = Flux.params(critic)
-        critic_loss, critic_gs = Flux.withgradient(critic_params) do
+        params = Flux.params(actor, critic)
+        loss, gs = Flux.withgradient(params) do
+          # critic loss
           values = critic(data.states)
           advantage = discounted_rewards - vec(values)
-          mean(advantage .^ 2)  # TODO: this loss is *really* high, is that normal?
-        end
-        Flux.Optimise.update!(opt, critic_params, critic_gs)
+          critic_loss = mean(advantage .^ 2)
 
-        # actor update
-        actor_params = Flux.params(actor)
-        actor_loss, actor_gs = Flux.withgradient(actor_params) do
+          # actor loss
           ac_dists = data.states |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
           log_probs = loglikelihood.(ac_dists, data.actions)
-          -mean(log_probs .* advantage)
+          actor_loss = -mean(log_probs .* advantage)
+
+          actor_loss + critic_loss
         end
-        Flux.Optimise.update!(opt, actor_params, actor_gs)
+        Flux.Optimise.update!(opt, params, gs)
+
 
         # logging
         steps_per_second = trunc(global_step / (time() - start_time))
-        @info "Training Statistics" actor_loss critic_loss steps_per_second
+        @info "Training Statistics" loss steps_per_second
         @info "Episode Statistics" episode_return episode_length
       end
 

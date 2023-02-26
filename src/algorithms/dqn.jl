@@ -5,6 +5,7 @@ using Flux
 using Dates: now, format
 
 include("../utils/buffers.jl")
+include("../utils/buffers2.jl")
 include("../utils/config_parser.jl")
 include("../utils/logger.jl")
 
@@ -51,7 +52,20 @@ function dqn()
   target_net = deepcopy(q_net)
   opt = ADAM()
 
-  rb = Buffers.ReplayBuffer(config.buffer_size)
+
+  actions = rand(action_space(env))
+  obs = rand(state_space(env))
+
+  transition = (
+    state=rand(state_space(env)),
+    action=rand(action_space(env)),
+    reward=1.0,
+    next_state=rand(state_space(env)),
+    terminal=true
+  )
+
+  rb = Buffer2.ReplayBuffer(transition, config.buffer_size)
+
   ϵ_schedule = t -> linear_schedule(config.epsilon_start, config.epsilon_end, config.epsilon_duration, t)
 
   episode_return = 0
@@ -73,14 +87,14 @@ function dqn()
     env(action)  # step env
 
     # add to buffer
-    transition = Buffers.Transition(
-      obs,
-      action,
-      reward(env),
-      deepcopy(state(env)),
-      is_terminated(env)
+    transition = (  # Buffers.Transition(
+      state=obs,
+      action=action,
+      reward=reward(env),
+      next_state=deepcopy(state(env)),
+      terminal=is_terminated(env)
     )
-    Buffers.add!(rb, transition)
+    Buffer2.add!(rb, transition)
 
     # Recording episode statistics
     episode_return += reward(env)
@@ -95,16 +109,16 @@ function dqn()
     # Learning
     if (global_step > config.min_buff_size) && (global_step % config.train_freq == 0)
       data = Buffers.sample(rb, config.batch_size)
-      # Convert actions to CartesianIndexes so they can be used to index matricies
-      actions = CartesianIndex.(data.actions, 1:length(data.actions))
+      # Convert actions to CartesianIndexes so they can be used to index q matrix
+      actions = CartesianIndex.(data.action, 1:length(data.action))
 
-      next_q = data.next_states |> target_net |> eachcol .|> maximum
-      td_target = data.rewards + config.gamma * next_q .* (1.0 .- data.terminals)
+      next_q = data.next_state' |> target_net |> eachcol .|> maximum
+      td_target = data.reward + config.gamma * next_q .* (1.0 .- data.terminal)
 
       # Get grads and update model
       params = Flux.params(q_net)
       loss, gs = Flux.withgradient(params) do
-        q = data.states |> q_net
+        q = data.state' |> q_net
         q = q[actions]
         Flux.mse(td_target, q)
       end

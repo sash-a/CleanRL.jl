@@ -1,6 +1,7 @@
 module Buffer2
 
 import StatsBase: sample
+using InvertedIndices
 
 mutable struct ReplayBuffer
   data::NamedTuple  # replay data
@@ -31,10 +32,31 @@ end
 
 # How to remove items for policy grad methods
 function sample(rb::ReplayBuffer, n::Int; ordered=false)
+  @assert n <= rb.size
+
   inds = sample(1:rb.size, n, replace=false, ordered=ordered)
   map(x -> x[inds, :], rb.data)
 end
 
+function sample_and_remove(rb::ReplayBuffer, n::Int; ordered=false)
+  @assert n <= rb.size
+
+  inds = sample(1:rb.size, n, replace=false, ordered=ordered)
+  data = map(x -> x[inds, :], rb.data)
+
+  # remove data
+  for key in keys(rb.data)
+    # Two coppies here, quite inefficient, but NamedTuples don't let you set fields
+    keep = rb.data[key][Not(inds), :]
+    rb.data[key] .= zeros(size(rb.data[key]))
+    rb.data[key][1:size(keep)[1], :] .= keep
+  end
+
+  rb.size -= n
+  rb.ptr -= n
+
+  data
+end
 end # module
 
 # b = Buffer.Buff((action=1, obs=[1, 2, 3]), 3)

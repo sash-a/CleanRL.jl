@@ -4,8 +4,7 @@ using Flux
 
 using Dates: now, format
 
-include("../utils/buffers.jl")
-include("../utils/buffers2.jl")
+include("../utils/replay_buffer.jl")
 include("../utils/config_parser.jl")
 include("../utils/logger.jl")
 
@@ -64,7 +63,7 @@ function dqn()
     terminal=true
   )
 
-  rb = Buffer2.ReplayBuffer(transition, config.buffer_size)
+  rb = Buffer.ReplayBuffer(transition, config.buffer_size)
 
   ϵ_schedule = t -> linear_schedule(config.epsilon_start, config.epsilon_end, config.epsilon_duration, t)
 
@@ -87,14 +86,14 @@ function dqn()
     env(action)  # step env
 
     # add to buffer
-    transition = (  # Buffers.Transition(
+    transition = (
       state=obs,
       action=action,
       reward=reward(env),
       next_state=deepcopy(state(env)),
       terminal=is_terminated(env)
     )
-    Buffer2.add!(rb, transition)
+    Buffer.add!(rb, transition)
 
     # Recording episode statistics
     episode_return += reward(env)
@@ -108,7 +107,7 @@ function dqn()
 
     # Learning
     if (global_step > config.min_buff_size) && (global_step % config.train_freq == 0)
-      data = Buffers.sample(rb, config.batch_size)
+      data = Buffer.sample(rb, config.batch_size)
       # Convert actions to CartesianIndexes so they can be used to index q matrix
       actions = CartesianIndex.(data.action, 1:length(data.action))
 

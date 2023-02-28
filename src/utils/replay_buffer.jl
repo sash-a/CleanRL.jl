@@ -1,4 +1,4 @@
-module Buffer2
+module Buffer
 
 import StatsBase: sample
 using InvertedIndices
@@ -57,14 +57,6 @@ function sample_and_remove(rb::ReplayBuffer, n::Int; ordered=false)
 
   data
 end
+
 end # module
 
-# b = Buffer.Buff((action=1, obs=[1, 2, 3]), 3)
-# Buffer.add!(b, (action=2, obs=[4, 5, 6]))
-# Buffer.add!(b, (action=3, obs=[7, 8, 9]))
-# Buffer.add!(b, (action=4, obs=[10, 11, 12]))
-# Buffer.add!(b, (action=5, obs=[13, 14, 15]))
-# @show b
-#
-# s = Buffer.sample(b, 2)
-# @show s size(s.action) size(s.obs)

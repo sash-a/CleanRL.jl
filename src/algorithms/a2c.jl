@@ -7,8 +7,7 @@ using Distributions: Categorical
 
 using Dates: now, format
 
-include("../utils/buffers.jl")
-include("../utils/buffers2.jl")
+include("../utils/replay_buffer.jl")
 include("../utils/config_parser.jl")
 include("../utils/logger.jl")
 include("../utils/networks.jl")
@@ -58,7 +57,7 @@ function a2c()
     terminal=true
   )
   # TODO: transition sampler
-  rb = Buffer2.ReplayBuffer(transition, config.min_replay_size * 2)
+  rb = Buffer.ReplayBuffer(transition, config.min_replay_size * 2)
 
   episode_return = 0
   episode_length = 0
@@ -73,13 +72,13 @@ function a2c()
 
     env(action)
 
-    transition = ( #Buffers.PGTransition(
+    transition = (
       state=obs,
       action=action,
       reward=reward(env),
       terminal=is_terminated(env)
     )
-    Buffer2.add!(rb, transition)
+    Buffer.add!(rb, transition)
 
     # Recording episode statistics
     episode_return += reward(env)
@@ -87,7 +86,7 @@ function a2c()
 
     if is_terminated(env)
       if rb.size > config.min_replay_size  # training
-        data = Buffer2.sample_and_remove(rb, rb.size; ordered=true)  # get all the data from the buffer
+        data = Buffer.sample_and_remove(rb, rb.size; ordered=true)  # get all the data from the buffer
         final_value = data.state' |> eachcol |> last |> critic |> first
         discounted_rewards = discounted_future_rewards(vec(data.reward), vec(data.terminal), final_value, config.gamma)
 

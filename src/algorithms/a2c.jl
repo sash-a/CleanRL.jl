@@ -56,7 +56,6 @@ function a2c()
     reward=1.0,
     terminal=true
   )
-  # TODO: transition sampler
   rb = Buffer.ReplayBuffer(transition, config.min_replay_size * 2)
 
   episode_return = 0

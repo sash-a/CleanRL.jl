@@ -51,10 +51,6 @@ function dqn()
   target_net = deepcopy(q_net)
   opt = ADAM()
 
-
-  actions = rand(action_space(env))
-  obs = rand(state_space(env))
-
   transition = (
     state=rand(state_space(env)),
     action=rand(action_space(env)),
@@ -62,7 +58,6 @@ function dqn()
     next_state=rand(state_space(env)),
     terminal=true
   )
-
   rb = Buffer.ReplayBuffer(transition, config.buffer_size)
 
   ϵ_schedule = t -> linear_schedule(config.epsilon_start, config.epsilon_end, config.epsilon_duration, t)

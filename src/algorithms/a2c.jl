@@ -7,7 +7,7 @@ using Distributions: Categorical
 
 using Dates: now, format
 
-include("../utils/buffers.jl")
+include("../utils/replay_buffer.jl")
 include("../utils/config_parser.jl")
 include("../utils/logger.jl")
 include("../utils/networks.jl")
@@ -50,7 +50,13 @@ function a2c()
   actor, critic = Networks.make_actor_critic_nn(env)
   opt = ADAM()  # two opts?
 
-  rb = Buffers.ReplayQueue{Buffers.PGTransition}()
+  transition = (
+    state=rand(state_space(env)),
+    action=rand(action_space(env)),
+    reward=1.0,
+    terminal=true
+  )
+  rb = Buffer.ReplayBuffer(transition, config.min_replay_size * 2)
 
   episode_return = 0
   episode_length = 0
@@ -65,38 +71,37 @@ function a2c()
 
     env(action)
 
-    transition = Buffers.PGTransition(
-      obs,
-      action,
-      reward(env),
-      is_terminated(env)
+    transition = (
+      state=obs,
+      action=action,
+      reward=reward(env),
+      terminal=is_terminated(env)
     )
-    Buffers.add!(rb, transition)
+    Buffer.add!(rb, transition)
 
     # Recording episode statistics
     episode_return += reward(env)
     episode_length += 1
 
     if is_terminated(env)
-      if length(rb.data) > config.min_replay_size  # training
-        data = sample(rb, length(rb.data))  # get all the data from the buffer
-        final_value = data.states |> eachcol |> last |> critic |> first
-        discounted_rewards = discounted_future_rewards(data.rewards, data.terminals, final_value, config.gamma)
+      if rb.size > config.min_replay_size  # training
+        data = Buffer.sample_and_remove(rb, rb.size; ordered=true)  # get all the data from the buffer
+        final_value = data.state' |> eachcol |> last |> critic |> first
+        discounted_rewards = discounted_future_rewards(vec(data.reward), vec(data.terminal), final_value, config.gamma)
 
         advantage = []
-        params = Flux.params(actor, critic)
-        loss, gs = Flux.withgradient(params) do
-          # critic loss
-          values = critic(data.states)
+        critic_params = Flux.params(critic)
+        critic_loss, critic_gs = Flux.withgradient(critic_params) do
+          values = critic(data.state')
           advantage = discounted_rewards - vec(values)
           critic_loss = mean(advantage .^ 2)
 
-          # actor loss
-          ac_dists = data.states |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
-          log_probs = loglikelihood.(ac_dists, data.actions)
-          actor_loss = -mean(log_probs .* advantage)
-
-          actor_loss + critic_loss
+        # actor update
+        actor_params = Flux.params(actor)
+        actor_loss, actor_gs = Flux.withgradient(actor_params) do
+          ac_dists = data.state' |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
+          log_probs = loglikelihood.(ac_dists, data.action)
+          -mean(log_probs .* advantage)
         end
         Flux.Optimise.update!(opt, params, gs)
 

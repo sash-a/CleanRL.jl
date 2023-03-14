@@ -2,12 +2,12 @@ using ReinforcementLearningEnvironments: CartPoleEnv
 using ReinforcementLearningBase: reset!, reward, state, is_terminated, action_space, state_space, AbstractEnv
 
 using Flux
-using StatsBase: sample, Weights, loglikelihood, mean
+using StatsBase: sample, Weights, loglikelihood, mean, entropy
 using Distributions: Categorical
 
 using Dates: now, format
 
-include("../utils/buffers.jl")
+include("../utils/replay_buffer.jl")
 include("../utils/config_parser.jl")
 include("../utils/logger.jl")
 include("../utils/networks.jl")
@@ -19,19 +19,20 @@ Base.@kwdef struct Config
   total_timesteps::Int = 500_000
   min_replay_size::Int = 512
 
-  lr::Float32 = 3e-4
-  gamma::Float32 = 0.99
-  lambda::Float32 = 0.95
+  # TODO: float32!
+  lr::Float64 = 3e-4
+  gamma::Float64 = 0.99
+  lambda::Float64 = 0.95
   epochs::Int32 = 5
   minibatch_szie::Int32 = 32
 
-  critic_loss_weight::Float32 = 0.9
-  entropy_loss_weight::Float32 = 0.01
-  clipping_epsilon::Float32 = 0.2
+  critic_loss_weight::Float64 = 0.9
+  entropy_loss_weight::Float64 = 0.01
+  clipping_epsilon::Float64 = 0.2
 end
 
 
-function gae(values::Vector{T}, rewards::Vector{T}, terminals::Vector{T}, γ::T, λ::T) where {T<:AbstractFloat}
+function gae(values::Vector{T}, rewards::Vector{T}, terminals::Vector{Bool}, γ::T, λ::T) where {T<:AbstractFloat}
   """
   Generalized advantage estimation.
 
@@ -57,8 +58,8 @@ function gae(values::Vector{T}, rewards::Vector{T}, terminals::Vector{T}, γ::T,
   advantages
 end
 
-function learn!(rb::Buffers.ReplayQueue{Buffers.PGTransition}, actor::Chain, critic::Chain, opt::Adam, config::Config)
-  data = sample(rb, length(rb.data))  # get all the data from the buffer
+function learn!(rb::Buffer.ReplayBuffer, actor::Chain, critic::Chain, opt::Adam, config::Config)
+  data = sample(rb, rb.size)  # get all the data from the buffer
   # TODO:
   # [ ] minibatching
   # [ ] multiple train loops
@@ -68,21 +69,27 @@ function learn!(rb::Buffers.ReplayQueue{Buffers.PGTransition}, actor::Chain, cri
   params = Flux.params(actor, critic)
   loss, gs = Flux.withgradient(params) do
     # chain rules: ignore derivative for stopping grads
-    # critic loss
-    values = critic(data.states)
-    advantage = gae(values, data.rewards[2:end], data.terminals[2:end], config.gamma, config.lambda)
+    values = critic(data.state') |> vec
+    advantage = gae(values, data.reward[2:end], data.terminal[2:end], config.gamma, config.lambda)
 
-    critic_loss = mean(advantage .^ 2)
+    # clipping actor loss
+    ac_dists = data.state' |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
+    new_log_probs = loglikelihood.(ac_dists, data.action) |> vec
+    @show size(new_log_probs) size(data.log_prob)
+    ratios = exp.(new_log_probs[1:end-1] .- vec(data.log_prob[1:end-1]))
+    clipped_ratios = clamp.(ratios, 1 - config.clipping_epsilon, 1 + config.clipping_epsilon)
+    # TODO: do we need to multiply both adv, or is it equivalent to take the min of the ratios
+    #  and multiply by advantage after
+    clipped_objective = min.(ratios .* advantage, clipped_ratios .* advantage)
 
-    # actor loss -> TODO: ppo's clipping loss
-    ac_dists = data.states |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
-    log_probs = loglikelihood.(ac_dists, data.actions)
-    actor_loss = -mean(log_probs .* advantage)
+    actor_loss = -mean(clipped_objective)
 
-    # TODO: entropy
-    entropy = 0
+    # v_target = advantage + values[1:end-1]
+    critic_loss = 05 * mean(advantage .^ 2)
 
-    actor_loss - config.critic_loss_weight * critic_loss + config.entropy_loss_weight * entropy
+    ac_dist_entropy = mean(entropy.(ac_dists))
+
+    actor_loss - config.critic_loss_weight * critic_loss + config.entropy_loss_weight * ac_dist_entropy
   end
   Flux.Optimise.update!(opt, params, gs)
 
@@ -98,8 +105,14 @@ function ppo()
   actor, critic = Networks.make_actor_critic_nn(env)
   opt = Adam()  # one opt per network?
 
-  rb = Buffers.ReplayQueue{Buffers.PGTransition}()
-
+  transition = (
+    state=rand(state_space(env)),
+    action=rand(action_space(env)),
+    log_prob=1.0,
+    reward=1.0,
+    terminal=true
+  )
+  rb = Buffer.ReplayBuffer(transition, config.min_replay_size * 2)
   episode_return = 0
   episode_length = 0
 
@@ -113,20 +126,21 @@ function ppo()
 
     env(action)
 
-    transition = Buffers.PGTransition(
-      obs,
-      action,  # add ac_dist for ppo to compute old log prob
-      reward(env),
-      is_terminated(env)
+    transition = (
+      state=obs,
+      action=action,
+      log_prob=loglikelihood(ac_dist, action),
+      reward=reward(env),
+      terminal=is_terminated(env)
     )
-    Buffers.add!(rb, transition)
+    Buffer.add!(rb, transition)
 
     # Recording episode statistics
     episode_return += reward(env)
     episode_length += 1
 
     if is_terminated(env)
-      if length(rb.data) > config.min_replay_size
+      if rb.size > config.min_replay_size
         # training
         loss = learn!(rb, actor, critic, opt, config)
         # logging
@@ -143,4 +157,4 @@ function ppo()
   end
 end
 
-# @time ppo()
+@time ppo()

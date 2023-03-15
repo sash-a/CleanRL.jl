@@ -3,6 +3,7 @@ using ReinforcementLearningBase: reset!, reward, state, is_terminated, action_sp
 
 using Flux
 using StatsBase: sample, Weights, loglikelihood, mean, entropy
+using Random: shuffle
 using Distributions: Categorical
 using ChainRulesCore
 
@@ -19,13 +20,14 @@ Base.@kwdef struct Config
 
   total_timesteps::Int = 500_000
   batch_size::Int = 128
+  minibatch_size::Int32 = 32
+  epochs::Int32 = 5
 
   # TODO: float32!
   lr::Float64 = 3e-4
   gamma::Float64 = 0.99
   lambda::Float64 = 0.95
-  epochs::Int32 = 5
-  minibatch_szie::Int32 = 32
+
 
   critic_loss_weight::Float64 = 0.5
   entropy_loss_weight::Float64 = 0.01
@@ -65,10 +67,21 @@ function learn!(rb::Buffer.ReplayBuffer, actor::Chain, critic::Chain, opt::Adam,
   # TODO:
   # [ ] minibatching
   # [ ] multiple train loops
-  # [ ] clipping loss
+  # [x] clipping loss
   # [x] value loss
-  # [ ] entropy
+  # [x] entropy
+
+  # TODO: calculate advantage out here so that you can completely mix the batch
   params = Flux.params(actor, critic)
+  for upd in 1:config.epochs
+    # shuffle data
+    inds = shuffle(1:rb.size-config.batch_size)
+    for i in 1:config.minibatch_size:config.batch_size+1
+      mb_inds = inds[i:i+config.minibatch_size]  # get minibatch num items
+      # TODO ...
+    end
+  end
+
   loss, gs = Flux.withgradient(params) do
     values = critic(data.state') |> vec
     advantage, value_target = ignore_derivatives() do
@@ -87,8 +100,8 @@ function learn!(rb::Buffer.ReplayBuffer, actor::Chain, critic::Chain, opt::Adam,
 
     actor_loss = -mean(clipped_objective)
 
-    # v_target = advantage + values[1:end-1]
-    critic_loss = 0.5 * mean((values[1:end-1] .- value_target) .^ 2)
+    # TODO: what values to t+1 or t?
+    critic_loss = 0.5 * mean((values[2:end] .- value_target) .^ 2)
 
     ac_dist_entropy = mean(entropy.(ac_dists))
 

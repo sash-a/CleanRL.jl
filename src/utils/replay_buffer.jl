@@ -58,5 +58,13 @@ function sample_and_remove(rb::ReplayBuffer, n::Int; ordered=false)
   data
 end
 
+function clear(rb::ReplayBuffer)
+  for key in keys(rb.data)
+    rb.data[key] .= zeros(size(rb.data[key]))
+  end
+
+  rb.size = 0
+  rb.ptr = 1
+end
 end # module
 

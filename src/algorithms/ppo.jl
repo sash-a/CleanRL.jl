@@ -17,8 +17,8 @@ include("../utils/networks.jl")
 Base.@kwdef struct Config
   run_name::String = format(now(), "yy-mm-dd|HH:MM:SS")
 
-  total_timesteps::Int = 50_000
-  min_replay_size::Int = 128
+  total_timesteps::Int = 500_000
+  batch_size::Int = 128
 
   # TODO: float32!
   lr::Float64 = 3e-4
@@ -27,7 +27,7 @@ Base.@kwdef struct Config
   epochs::Int32 = 5
   minibatch_szie::Int32 = 32
 
-  critic_loss_weight::Float64 = 0.9
+  critic_loss_weight::Float64 = 0.5
   entropy_loss_weight::Float64 = 0.01
   clipping_epsilon::Float64 = 0.2
 end
@@ -60,7 +60,8 @@ function gae(values::Vector{T}, rewards::Vector{T}, terminals::Vector{Bool}, γ:
 end
 
 function learn!(rb::Buffer.ReplayBuffer, actor::Chain, critic::Chain, opt::Adam, config::Config)
-  data = sample(rb, rb.size)  # get all the data from the buffer
+  # data = Buffer.sample_and_remove(rb, rb.size; ordered=true)  # get all the data from the buffer
+  data = rb.data
   # TODO:
   # [ ] minibatching
   # [ ] multiple train loops
@@ -78,7 +79,7 @@ function learn!(rb::Buffer.ReplayBuffer, actor::Chain, critic::Chain, opt::Adam,
     # TODO: make data 
     ac_dists = data.state' |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
     new_log_probs = loglikelihood.(ac_dists, data.action) |> vec
-    ratios = exp.(new_log_probs[1:end-1] .- vec(data.log_prob[1:end-1]))
+    ratios = exp.(new_log_probs[1:end-1] .- data.log_prob[1:end-1])
     clipped_ratios = clamp.(ratios, 1 - config.clipping_epsilon, 1 + config.clipping_epsilon)
     # TODO: do we need to multiply both adv, or is it equivalent to take the min of the ratios
     #  and multiply by advantage after
@@ -91,15 +92,16 @@ function learn!(rb::Buffer.ReplayBuffer, actor::Chain, critic::Chain, opt::Adam,
 
     ac_dist_entropy = mean(entropy.(ac_dists))
 
-    actor_loss - config.critic_loss_weight * critic_loss + config.entropy_loss_weight * ac_dist_entropy
+    actor_loss + config.critic_loss_weight * critic_loss - config.entropy_loss_weight * ac_dist_entropy
   end
   Flux.Optimise.update!(opt, params, gs)
+
+  Buffer.clear(rb)
 
   loss
 end
 
-function ppo()
-  config = ConfigParser.argparse_struct(Config())
+function ppo(config::Config)
   Logger.make_logger("ppo|$(config.run_name)")
 
   env = CartPoleEnv()  # TODO make env configurable through argparse
@@ -114,7 +116,7 @@ function ppo()
     reward=1.0,
     terminal=true
   )
-  rb = Buffer.ReplayBuffer(transition, config.min_replay_size * 2)
+  rb = Buffer.ReplayBuffer(transition, config.batch_size * 2)
   episode_return = 0
   episode_length = 0
 
@@ -142,7 +144,7 @@ function ppo()
     episode_length += 1
 
     if transition.terminal
-      if rb.size > config.min_replay_size
+      if rb.size > config.batch_size
         # training
         loss = learn!(rb, actor, critic, opt, config)
         # logging
@@ -159,4 +161,5 @@ function ppo()
   end
 end
 
-@time ppo()
+const config = ConfigParser.argparse_struct(Config())
+@time ppo(config)

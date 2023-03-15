@@ -96,27 +96,28 @@ function a2c()
           advantage = discounted_rewards - vec(values)
           critic_loss = mean(advantage .^ 2)
 
-        # actor update
-        actor_params = Flux.params(actor)
-        actor_loss, actor_gs = Flux.withgradient(actor_params) do
-          ac_dists = data.state' |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
-          log_probs = loglikelihood.(ac_dists, data.action)
-          -mean(log_probs .* advantage)
+          # actor update
+          actor_params = Flux.params(actor)
+          actor_loss, actor_gs = Flux.withgradient(actor_params) do
+            ac_dists = data.state' |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
+            log_probs = loglikelihood.(ac_dists, data.action)
+            -mean(log_probs .* advantage)
+          end
+          Flux.Optimise.update!(opt, params, gs)
+
+
+          # logging
+          steps_per_second = trunc(global_step / (time() - start_time))
+          @info "Training Statistics" loss steps_per_second
+          @info "Episode Statistics" episode_return episode_length
         end
-        Flux.Optimise.update!(opt, params, gs)
 
-
-        # logging
-        steps_per_second = trunc(global_step / (time() - start_time))
-        @info "Training Statistics" loss steps_per_second
-        @info "Episode Statistics" episode_return episode_length
+        # reset counters
+        episode_length, episode_return = 0, 0
+        reset!(env)
       end
 
-      # reset counters
-      episode_length, episode_return = 0, 0
-      reset!(env)
     end
-
   end
 end
 

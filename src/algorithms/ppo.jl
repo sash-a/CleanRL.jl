@@ -4,6 +4,7 @@ using ReinforcementLearningBase: reset!, reward, state, is_terminated, action_sp
 using Flux
 using StatsBase: sample, Weights, loglikelihood, mean, entropy
 using Distributions: Categorical
+using ChainRulesCore
 
 using Dates: now, format
 
@@ -16,8 +17,8 @@ include("../utils/networks.jl")
 Base.@kwdef struct Config
   run_name::String = format(now(), "yy-mm-dd|HH:MM:SS")
 
-  total_timesteps::Int = 500_000
-  min_replay_size::Int = 512
+  total_timesteps::Int = 50_000
+  min_replay_size::Int = 128
 
   # TODO: float32!
   lr::Float64 = 3e-4
@@ -54,8 +55,8 @@ function gae(values::Vector{T}, rewards::Vector{T}, terminals::Vector{Bool}, γ:
     advantages[t] = gae
   end
 
-  # value target = advantages + values[1:end-1]
-  advantages
+  value_target = advantages + values[1:end-1]
+  advantages, value_target
 end
 
 function learn!(rb::Buffer.ReplayBuffer, actor::Chain, critic::Chain, opt::Adam, config::Config)
@@ -68,14 +69,15 @@ function learn!(rb::Buffer.ReplayBuffer, actor::Chain, critic::Chain, opt::Adam,
   # [ ] entropy
   params = Flux.params(actor, critic)
   loss, gs = Flux.withgradient(params) do
-    # chain rules: ignore derivative for stopping grads
     values = critic(data.state') |> vec
-    advantage = gae(values, data.reward[2:end], data.terminal[2:end], config.gamma, config.lambda)
+    advantage, value_target = ignore_derivatives() do
+      gae(values, data.reward[2:end], data.terminal[2:end], config.gamma, config.lambda)
+    end
 
     # clipping actor loss
+    # TODO: make data 
     ac_dists = data.state' |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
     new_log_probs = loglikelihood.(ac_dists, data.action) |> vec
-    @show size(new_log_probs) size(data.log_prob)
     ratios = exp.(new_log_probs[1:end-1] .- vec(data.log_prob[1:end-1]))
     clipped_ratios = clamp.(ratios, 1 - config.clipping_epsilon, 1 + config.clipping_epsilon)
     # TODO: do we need to multiply both adv, or is it equivalent to take the min of the ratios
@@ -85,7 +87,7 @@ function learn!(rb::Buffer.ReplayBuffer, actor::Chain, critic::Chain, opt::Adam,
     actor_loss = -mean(clipped_objective)
 
     # v_target = advantage + values[1:end-1]
-    critic_loss = 05 * mean(advantage .^ 2)
+    critic_loss = 0.5 * mean((values[1:end-1] .- value_target) .^ 2)
 
     ac_dist_entropy = mean(entropy.(ac_dists))
 
@@ -136,10 +138,10 @@ function ppo()
     Buffer.add!(rb, transition)
 
     # Recording episode statistics
-    episode_return += reward(env)
+    episode_return += transition.reward
     episode_length += 1
 
-    if is_terminated(env)
+    if transition.terminal
       if rb.size > config.min_replay_size
         # training
         loss = learn!(rb, actor, critic, opt, config)

@@ -20,7 +20,7 @@ function add!(rb::ReplayBuffer{TupleNames,A}, transition::NamedTuple{TupleNames,
   @assert keys(rb.data) == keys(transition)
 
   for (key, value) in pairs(transition)
-    rb.data[key][rb.ptr, :] .= value
+    rb.data[key][rb.ptr, :] = value
   end
 
   # increment/wrap `ptr`

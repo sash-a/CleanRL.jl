@@ -3,19 +3,20 @@ module Buffer
 import StatsBase: sample
 using InvertedIndices
 
-mutable struct ReplayBuffer
-  data::NamedTuple  # replay data
+mutable struct ReplayBuffer{TupleNames,TupleValues}
+  data::NamedTuple{TupleNames,TupleValues}  # replay data
   capacity::Int  # max buffer size
   ptr::Int  # pointer to current index
   size::Int  # current array size
 
   function ReplayBuffer(transition::NamedTuple, capacity::Int)
     data = map(x -> zeros(eltype(x), (capacity, size(x)...)), transition)
-    new(data, capacity, 1, 0)
+    @show
+    new{keys(data),typeof(values(data))}(data, capacity, 1, 0)
   end
 end
 
-function add!(rb::ReplayBuffer, transition::NamedTuple)
+function add!(rb::ReplayBuffer{TupleNames,A}, transition::NamedTuple{TupleNames,B}) where {TupleNames} where {A} where {B}
   @assert keys(rb.data) == keys(transition)
 
   for (key, value) in pairs(transition)

@@ -17,8 +17,6 @@ mutable struct ReplayBuffer{TupleNames,TupleValues}
 end
 
 function add!(rb::ReplayBuffer{TupleNames,A}, transition::NamedTuple{TupleNames,B}) where {TupleNames} where {A} where {B}
-  @assert keys(rb.data) == keys(transition)
-
   for (key, value) in pairs(transition)
     rb.data[key][rb.ptr, :] = value
   end
@@ -39,29 +37,14 @@ function sample(rb::ReplayBuffer, n::Int; ordered=false)
   map(x -> x[inds, :], rb.data)
 end
 
-function sample_and_remove(rb::ReplayBuffer, n::Int; ordered=false)
-  @assert n <= rb.size
-
-  inds = sample(1:rb.size, n, replace=false, ordered=ordered)
-  data = map(x -> x[inds, :], rb.data)
-
-  # remove data
-  for key in keys(rb.data)
-    # Two coppies here, quite inefficient, but NamedTuples don't let you set fields
-    keep = rb.data[key][Not(inds), :]
-    rb.data[key] .= zeros(size(rb.data[key]))
-    rb.data[key][1:size(keep)[1], :] .= keep
-  end
-
-  rb.size -= n
-  rb.ptr -= n
-
-  data
+function Base.last(rb::ReplayBuffer)
+  @assert rb.size > 0
+  map(x -> x[rb.ptr-1, :], rb.data)
 end
 
-function clear(rb::ReplayBuffer)
+function clear!(rb::ReplayBuffer)
   for key in keys(rb.data)
-    rb.data[key] .= zeros(size(rb.data[key]))
+    rb.data[key][:] = similar(rb.data[key])
   end
 
   rb.size = 0

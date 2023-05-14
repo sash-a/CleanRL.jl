@@ -61,26 +61,8 @@ function gae(values::Vector{T}, rewards::Vector{T}, terminals::Vector{Bool}, γ:
   advantages, value_target
 end
 
-function learn!(rb::Buffer.ReplayBuffer, actor::Chain, critic::Chain, opt::Adam, config::Config)
-  # data = Buffer.sample_and_remove(rb, rb.size; ordered=true)  # get all the data from the buffer
-  data = rb.data
-  # TODO:
-  # [ ] minibatching
-  # [ ] multiple train loops
-  # [x] clipping loss
-  # [x] value loss
-  # [x] entropy
-
-  # TODO: calculate advantage out here so that you can completely mix the batch
-  params = Flux.params(actor, critic)
-  for upd in 1:config.epochs
-    # shuffle data
-    inds = shuffle(1:rb.size-config.batch_size)
-    for i in 1:config.minibatch_size:config.batch_size+1
-      mb_inds = inds[i:i+config.minibatch_size]  # get minibatch num items
-      # TODO ...
-    end
-  end
+# todo instead of rb pass in all the datas
+function learn_minibatch!(rb::Buffer.ReplayBuffer, advantages::Vector{<:AbstractFloat}, params::Flux.params, actor::Chain, critic::Chain, opt::Adam, config::Config)
 
   loss, gs = Flux.withgradient(params) do
     values = critic(data.state') |> vec
@@ -112,6 +94,30 @@ function learn!(rb::Buffer.ReplayBuffer, actor::Chain, critic::Chain, opt::Adam,
   Buffer.clear(rb)
 
   loss
+end
+function learn!(rb::Buffer.ReplayBuffer, actor::Chain, critic::Chain, opt::Adam, config::Config)
+  # data = Buffer.sample_and_remove(rb, rb.size; ordered=true)  # get all the data from the buffer
+  data = rb.data
+  # TODO:
+  # [ ] minibatching
+  # [ ] multiple train loops
+  # [x] clipping loss
+  # [x] value loss
+  # [x] entropy
+
+  values = critic(data.state') |> vec
+  advantages, value_target = gae(values, data.reward[2:end], data.terminal[2:end], config.gamma, config.lambda)
+  # TODO: calculate advantage out here so that you can completely mix the batch
+  params = Flux.params(actor, critic)
+  loss = 0
+  for upd in 1:config.epochs
+    # shuffle data
+    inds = shuffle(1:rb.size-config.batch_size)
+    for i in 1:config.minibatch_size:config.batch_size
+      mb_inds = inds[i:i+config.minibatch_size]  # get minibatch num items
+      loss += learn_minibatch!()
+    end
+  end
 end
 
 function ppo(config::Config)

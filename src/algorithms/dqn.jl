@@ -1,4 +1,5 @@
 using ReinforcementLearningEnvironments: CartPoleEnv
+using ProfileView
 using ReinforcementLearningBase: reset!, reward, state, is_terminated, action_space, state_space, AbstractEnv
 using Flux
 
@@ -41,8 +42,7 @@ function linear_schedule(start_ϵ, end_ϵ, duration, t)
 end
 
 
-function dqn()
-  config = ConfigParser.argparse_struct(Config())
+function dqn(config::Config)
   Logger.make_logger(config.run_name)
 
   env = CartPoleEnv()  # TODO make env configurable through CLI
@@ -130,4 +130,8 @@ function dqn()
   end
 end
 
-@time dqn()
+const config = ConfigParser.argparse_struct(Config())
+@time dqn(config)
+# compile_conf = Config(run_name="compile", total_timesteps=201, min_buff_size=200)
+# @profview dqn(compile_conf)
+# @profview dqn(config)

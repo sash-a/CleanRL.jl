@@ -125,15 +125,15 @@ function ppo(config::Config=Config())
       env(action[1])  # todo cartpole expects an int, but other envs may expect a vec
 
       Buffer.add!(rb, (
-        state=deepcopy(next_obs),
-        action=deepcopy(action),
+        state=next_obs,
+        action=action,
         logprob=log_prob,
-        reward=deepcopy([reward(env)]),
+        reward=[reward(env)],
         terminal=[next_done],
         value=value,
       ))
       next_obs = deepcopy(state(env))
-      next_done = deepcopy(is_terminated(env))
+      next_done = is_terminated(env)
       episode_return += last(rb).reward[1]
 
       if next_done

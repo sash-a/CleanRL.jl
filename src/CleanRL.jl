@@ -15,7 +15,7 @@ include("utils/config_parser.jl")
 include("utils/logger.jl")
 include("utils/networks.jl")
 
-include("algorithms/ppo2.jl")
+include("algorithms/ppo.jl")
 include("algorithms/dqn.jl")
 include("algorithms/a2c.jl")
 

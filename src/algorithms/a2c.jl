@@ -1,5 +1,8 @@
+# Seems broken for the time being getting NaNs in training :(
 Base.@kwdef struct A2CConfig
   run_name::String = format(now(), "yy-mm-dd|HH:MM:SS")
+
+  lr::Float64 = 0.0001
 
   total_timesteps::Int = 500_000
   min_replay_size::Int = 512
@@ -27,12 +30,13 @@ end
 #  normalise advantage
 #  lr
 function a2c(config::A2CConfig=A2CConfig())
+  # @show config.run_name
   Logger.make_logger("a2c|$(config.run_name)")
 
   env = CartPoleEnv()  # TODO make env configurable through argparse
 
   actor, critic = Networks.make_actor_critic(env)
-  opt = Adam()  # two opts?
+  opt = Flux.Optimiser(ClipNorm(0.5), Adam(config.lr))
 
   transition = (
     state=rand(state_space(env)),
@@ -67,41 +71,44 @@ function a2c(config::A2CConfig=A2CConfig())
     episode_return += reward(env)
     episode_length += 1
 
-    if is_terminated(env)
+    if is_terminated(env)  # todo: might be missing a final transition
       if rb.size > config.min_replay_size  # training
         data = rb.data
         final_value = data.state' |> eachcol |> last |> critic |> first
         discounted_rewards = discounted_future_rewards(vec(data.reward), vec(data.terminal), final_value, config.gamma)
 
+        # critic update
         advantage = []
         critic_params = Flux.params(critic)
         critic_loss, critic_gs = Flux.withgradient(critic_params) do
           values = critic(data.state')
           advantage = discounted_rewards - vec(values)
-          critic_loss = mean(advantage .^ 2)
-
-          # actor update
-          actor_params = Flux.params(actor)
-          actor_loss, actor_gs = Flux.withgradient(actor_params) do
-            ac_dists = data.state' |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
-            log_probs = loglikelihood.(ac_dists, data.action)
-            -mean(log_probs .* advantage)
-          end
-          Flux.Optimise.update!(opt, params, gs)
-
-
-          # logging
-          steps_per_second = trunc(global_step / (time() - start_time))
-          @info "Training Statistics" loss steps_per_second
-          @info "Episode Statistics" episode_return episode_length
+          mean(advantage .^ 2)
         end
+        Flux.Optimise.update!(opt, critic_params, critic_gs)
 
-        # reset counters
-        episode_length, episode_return = 0, 0
-        reset!(env)
+        # actor update
+        actor_params = Flux.params(actor)
+        actor_loss, actor_gs = Flux.withgradient(actor_params) do
+          ac_dists = data.state' |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
+          log_probs = loglikelihood.(ac_dists, data.action)
+          -mean(log_probs .* advantage)
+        end
+        Flux.Optimise.update!(opt, actor_params, actor_gs)
+
+        # logging
+        steps_per_second = trunc(global_step / (time() - start_time))
+        @info "Training Statistics" actor_loss critic_loss steps_per_second
+        @info "Episode Statistics" episode_return episode_length
+
+        Buffer.clear!(rb)
       end
 
+      # reset counters
+      episode_length, episode_return = 0, 0
+      reset!(env)
     end
+
   end
 end
 

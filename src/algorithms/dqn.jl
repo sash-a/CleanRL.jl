@@ -32,7 +32,7 @@ end
 
 
 function dqn(config::DQNConfig=DQNConfig())
-  Logger.make_logger(config.run_name)
+  Logger.make_logger("dqn|$(config.run_name)")
 
   env = CartPoleEnv()  # TODO make env configurable through CLI
 

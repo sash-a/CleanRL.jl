@@ -1,24 +1,14 @@
-using ReinforcementLearningEnvironments: CartPoleEnv
-using ReinforcementLearningBase: reset!, reward, state, is_terminated, action_space, state_space, AbstractEnv
-using Flux
-
-using Dates: now, format
-
-include("../utils/replay_buffer.jl")
-include("../utils/config_parser.jl")
-include("../utils/logger.jl")
-
-
-Base.@kwdef struct Config
+Base.@kwdef struct DQNConfig
   run_name::String = format(now(), "yy-mm-dd|HH:MM:SS")
 
   log_frequencey::Int = 1000
 
-  total_timesteps::Int = 50_000
+  total_timesteps::Int = 500_000
 
   buffer_size::Int64 = 10_000
   min_buff_size::Int64 = 200
 
+  lr::Float64 = 0.0001
   train_freq::Int64 = 10
   target_net_freq::Int64 = 100
   batch_size::Int64 = 120
@@ -30,8 +20,8 @@ Base.@kwdef struct Config
 end
 
 function make_nn(env::AbstractEnv)
-  in_size = length(state_space(env).s)
-  out_size = length(action_space(env).s)
+  in_size = length(state_space(env))
+  out_size = length(action_space(env))
   Chain(Dense(in_size, 120, relu), Dense(120, 84, relu), Dense(84, out_size))
 end
 
@@ -41,15 +31,14 @@ function linear_schedule(start_ϵ, end_ϵ, duration, t)
 end
 
 
-function dqn()
-  config = ConfigParser.argparse_struct(Config())
-  Logger.make_logger(config.run_name)
+function dqn(config::DQNConfig=DQNConfig())
+  Logger.make_logger("dqn|$(config.run_name)")
 
   env = CartPoleEnv()  # TODO make env configurable through CLI
 
   q_net = make_nn(env)
   target_net = deepcopy(q_net)
-  opt = ADAM()
+  opt = Adam(config.lr)
 
   transition = (
     state=rand(state_space(env)),
@@ -83,10 +72,10 @@ function dqn()
     # add to buffer
     transition = (
       state=obs,
-      action=action,
-      reward=reward(env),
+      action=[action],
+      reward=[reward(env)],
       next_state=deepcopy(state(env)),
-      terminal=is_terminated(env)
+      terminal=[is_terminated(env)]
     )
     Buffer.add!(rb, transition)
 
@@ -130,4 +119,3 @@ function dqn()
   end
 end
 
-@time dqn()

@@ -1,20 +1,8 @@
-using ReinforcementLearningEnvironments: CartPoleEnv
-using ReinforcementLearningBase: reset!, reward, state, is_terminated, action_space, state_space, AbstractEnv
-
-using Flux
-using StatsBase: sample, Weights, loglikelihood, mean
-using Distributions: Categorical
-
-using Dates: now, format
-
-include("../utils/replay_buffer.jl")
-include("../utils/config_parser.jl")
-include("../utils/logger.jl")
-include("../utils/networks.jl")
-
-
-Base.@kwdef struct Config
+# Seems broken for the time being getting NaNs in training :(
+Base.@kwdef struct A2CConfig
   run_name::String = format(now(), "yy-mm-dd|HH:MM:SS")
+
+  lr::Float64 = 0.0001
 
   total_timesteps::Int = 500_000
   min_replay_size::Int = 512
@@ -41,14 +29,14 @@ end
 #  mulitple V train steps
 #  normalise advantage
 #  lr
-function a2c()
-  config = ConfigParser.argparse_struct(Config())
+function a2c(config::A2CConfig=A2CConfig())
+  # @show config.run_name
   Logger.make_logger("a2c|$(config.run_name)")
 
   env = CartPoleEnv()  # TODO make env configurable through argparse
 
-  actor, critic = Networks.make_actor_critic_nn(env)
-  opt = ADAM()
+  actor, critic = Networks.make_actor_critic(env)
+  opt = Flux.Optimiser(ClipNorm(0.5), Adam(config.lr))
 
   transition = (
     state=rand(state_space(env)),
@@ -73,9 +61,9 @@ function a2c()
 
     transition = (
       state=obs,
-      action=action,
-      reward=reward(env),
-      terminal=is_terminated(env)
+      action=[action],
+      reward=[reward(env)],
+      terminal=[is_terminated(env)]
     )
     Buffer.add!(rb, transition)
 
@@ -83,9 +71,9 @@ function a2c()
     episode_return += reward(env)
     episode_length += 1
 
-    if is_terminated(env)
+    if is_terminated(env)  # todo: might be missing a final transition
       if rb.size > config.min_replay_size  # training
-        data = Buffer.sample_and_remove(rb, rb.size; ordered=true)  # get all the data from the buffer
+        data = rb.data
         final_value = data.state' |> eachcol |> last |> critic |> first
         discounted_rewards = discounted_future_rewards(vec(data.reward), vec(data.terminal), final_value, config.gamma)
 
@@ -95,7 +83,7 @@ function a2c()
         critic_loss, critic_gs = Flux.withgradient(critic_params) do
           values = critic(data.state')
           advantage = discounted_rewards - vec(values)
-          mean(advantage .^ 2)  # TODO: this loss is *really* high, is that normal?
+          mean(advantage .^ 2)
         end
         Flux.Optimise.update!(opt, critic_params, critic_gs)
 
@@ -112,6 +100,8 @@ function a2c()
         steps_per_second = trunc(global_step / (time() - start_time))
         @info "Training Statistics" actor_loss critic_loss steps_per_second
         @info "Episode Statistics" episode_return episode_length
+
+        Buffer.clear!(rb)
       end
 
       # reset counters
@@ -122,4 +112,3 @@ function a2c()
   end
 end
 
-@time a2c()

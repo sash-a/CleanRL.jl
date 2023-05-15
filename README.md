@@ -5,11 +5,10 @@ Inspired by [CleanRL](https://github.com/vwxyzjn/cleanrl)
 
 ## TODO (Algorithms):
 * ~~Simple DQN~~
-* ~~A2C~~
+* ~~A2C~~ - currently not working :(
 * Rainbow
-* PPO
+* ~~PPO~~
 * DDPG
-* TRPO
 * SAC
 
 ## TODO (Utils):

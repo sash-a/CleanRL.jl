@@ -1,19 +1,4 @@
-using ReinforcementLearningEnvironments: CartPoleEnv
-using ReinforcementLearningBase: reset!, reward, state, is_terminated, action_space, state_space, AbstractEnv
-
-using Flux
-using StatsBase: sample, Weights, loglikelihood, mean
-using Distributions: Categorical
-
-using Dates: now, format
-
-include("../utils/replay_buffer.jl")
-include("../utils/config_parser.jl")
-include("../utils/logger.jl")
-include("../utils/networks.jl")
-
-
-Base.@kwdef struct Config
+Base.@kwdef struct A2CConfig
   run_name::String = format(now(), "yy-mm-dd|HH:MM:SS")
 
   total_timesteps::Int = 500_000
@@ -41,14 +26,13 @@ end
 #  mulitple V train steps
 #  normalise advantage
 #  lr
-function a2c()
-  config = ConfigParser.argparse_struct(Config())
+function a2c(config::A2CConfig=A2CConfig())
   Logger.make_logger("a2c|$(config.run_name)")
 
   env = CartPoleEnv()  # TODO make env configurable through argparse
 
   actor, critic = Networks.make_actor_critic(env)
-  opt = ADAM()  # two opts?
+  opt = Adam()  # two opts?
 
   transition = (
     state=rand(state_space(env)),
@@ -73,9 +57,9 @@ function a2c()
 
     transition = (
       state=obs,
-      action=action,
-      reward=reward(env),
-      terminal=is_terminated(env)
+      action=[action],
+      reward=[reward(env)],
+      terminal=[is_terminated(env)]
     )
     Buffer.add!(rb, transition)
 
@@ -85,7 +69,7 @@ function a2c()
 
     if is_terminated(env)
       if rb.size > config.min_replay_size  # training
-        data = Buffer.sample_and_remove(rb, rb.size; ordered=true)  # get all the data from the buffer
+        data = rb.data
         final_value = data.state' |> eachcol |> last |> critic |> first
         discounted_rewards = discounted_future_rewards(vec(data.reward), vec(data.terminal), final_value, config.gamma)
 
@@ -121,4 +105,3 @@ function a2c()
   end
 end
 
-@time a2c()

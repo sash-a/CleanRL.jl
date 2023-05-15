@@ -1,20 +1,4 @@
-using ReinforcementLearningEnvironments: CartPoleEnv
-using ReinforcementLearningBase: reset!, reward, state, is_terminated, action_space, state_space, AbstractEnv
-
-using Flux
-using StatsBase: sample, Weights, loglikelihood, mean, entropy, std
-using Random: shuffle
-using Distributions: Categorical
-using ChainRulesCore
-
-using Dates: now, format
-
-include("../utils/replay_buffer.jl")
-include("../utils/config_parser.jl")
-include("../utils/logger.jl")
-include("../utils/networks.jl")
-
-@kwdef struct Config
+@kwdef struct PPOConfig
   total_timesteps::Int = 500_000
   batch_size::Int = 512
   num_minibatches::Int = 4
@@ -72,7 +56,7 @@ function gae(values::Vector{T}, rewards::Vector{T}, terminals::Vector{Bool}, γ:
   advantages, value_target
 end
 
-function ppo(config::Config=Config())
+function ppo(config::PPOConfig=PPOConfig())
   Logger.make_logger("ppo-2-test")
 
   env = CartPoleEnv()  # TODO make env configurable through argparse

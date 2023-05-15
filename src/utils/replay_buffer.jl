@@ -11,7 +11,6 @@ mutable struct ReplayBuffer{TupleNames,TupleValues}
 
   function ReplayBuffer(transition::NamedTuple, capacity::Int)
     data = map(x -> zeros(eltype(x), (capacity, size(x)...)), transition)
-    @show
     new{keys(data),typeof(values(data))}(data, capacity, 1, 0)
   end
 end
@@ -39,7 +38,8 @@ end
 
 function Base.last(rb::ReplayBuffer)
   @assert rb.size > 0
-  map(x -> x[rb.ptr-1, :], rb.data)
+  i = rb.ptr - 1 < 1 ? rb.capacity : rb.ptr - 1
+  map(x -> x[i, :], rb.data)
 end
 
 function clear!(rb::ReplayBuffer)

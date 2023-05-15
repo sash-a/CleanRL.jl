@@ -71,13 +71,6 @@ function ppo(config::Config=Config())
     value=1.0
   )
 
-  # obs = zeros(Float64, (config.batch_size, 4))
-  # actions = zeros(Int64, config.batch_size)
-  # logprobs = zeros(Float64, config.batch_size)
-  # rewards = zeros(Float64, config.batch_size)
-  # dones = zeros(Bool, config.batch_size)
-  # values = zeros(Float64, config.batch_size)
-
   rb = Buffer.ReplayBuffer(transition, config.batch_size)
 
   global_step = 0
@@ -95,31 +88,23 @@ function ppo(config::Config=Config())
     opt.os[2].eta = frac * config.lr
     for step in 1:config.batch_size
       global_step += 1
-      # obs[step, :] = next_obs
-      # dones[step] = next_done
 
       action, log_prob, entropy, value = get_action_and_value(next_obs, actor, critic)
-      # values[step] = value[1]
-      # actions[step] = action[1]
-      # logprobs[step] = log_prob[1]
 
+      # step env
+      env(action[1])  # todo cartpole expects an int, but other envs may expect a vec
 
-      # todo cartpole expects an int, but other envs may expect a vec
-      env(action[1])
-
-      rew = reward(env)
       Buffer.add!(rb, (
         state=deepcopy(next_obs),
         action=deepcopy(action),
-        logprob=[deepcopy(log_prob[1])],
-        reward=[deepcopy(rew)],
-        terminal=[deepcopy(next_done)],
-        value=deepcopy(value),
+        logprob=log_prob,
+        reward=deepcopy([reward(env)]),
+        terminal=[next_done],
+        value=value,
       ))
       next_obs = deepcopy(state(env))
       next_done = deepcopy(is_terminated(env))
-      # rewards[step] = rew
-      episode_return += rew  # todo: convenience method: last(rb)
+      episode_return += last(rb).reward[1]
 
       if next_done
         reset!(env)
@@ -134,7 +119,6 @@ function ppo(config::Config=Config())
 
     # bootstrap value if not done
     next_value = critic(next_obs)[1]
-    # returns = similar(rb.data.reward)
     advantages = similar(rb.data.reward)
     lastgaelam = 0
     for t in reverse(1:config.batch_size-1)

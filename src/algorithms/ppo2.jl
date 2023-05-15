@@ -40,11 +40,41 @@ function get_action_and_value(state::AbstractVecOrMat{Float64}, actor::Chain, cr
   action, lp, entropy.(logits), critic(state)
 end
 
+function gae(values::Vector{T}, rewards::Vector{T}, terminals::Vector{Bool}, γ::T, λ::T) where {T<:AbstractFloat}
+  """
+  Generalized advantage estimation.
+
+  Args:
+    values: [0, k]
+    rewards: [1, k]
+    terminals: [0,k]
+    γ: gamma/discount
+    λ: gae lambda
+
+  Returns: 
+   advatages [0, k-1]
+  """
+  advantages = similar(rewards)
+  nonterm = 1.0 .- terminals
+
+  gae = 0.0
+  for t in length(rewards)-1:-1:1
+    δ = rewards[t] + γ * nonterm[t+1] * values[t+1] - values[t]
+    gae = δ + γ * λ * nonterm[t+1] * gae
+    advantages[t] = gae
+  end
+
+  value_target = advantages + values[1:end-1]
+  advantages, value_target
+end
+
+
 function ppo(config::Config=Config())
   Logger.make_logger("ppo-2-test")
 
   env = CartPoleEnv()  # TODO make env configurable through argparse
 
+  # todo method
   actor = Chain(
     Dense(4, 64, relu),
     Dense(64, 64, relu),
@@ -60,7 +90,7 @@ function ppo(config::Config=Config())
   minibatch_size = config.batch_size ÷ config.num_minibatches
   num_updates = config.total_timesteps ÷ config.batch_size
 
-  opt = Flux.Optimiser(ClipNorm(0.5), Adam(2.5e-4, (0.9, 0.999), 1e-5))  # one opt per network?
+  opt = Flux.Optimiser(ClipNorm(0.5), Adam(config.lr))  # one opt per network?
 
   transition = (
     state=rand(state_space(env)),
@@ -108,8 +138,6 @@ function ppo(config::Config=Config())
 
       if next_done
         reset!(env)
-        next_obs = state(env)
-        next_done = is_terminated(env)
         steps_per_sec = global_step / (time() - start_time)
         @info "Episode Statistics" episode_return global_step steps_per_sec step
         episode_return = 0
@@ -119,23 +147,15 @@ function ppo(config::Config=Config())
 
     # bootstrap value if not done
     next_value = critic(next_obs)[1]
-    advantages = similar(rb.data.reward)
-    lastgaelam = 0
-    for t in reverse(1:config.batch_size-1)
-      if t == config.batch_size - 1
-        nextnonterminal = 1.0 - next_done
-        nextvalue = next_value
-      else
-        nextnonterminal = 1.0 - rb.data.terminal[t+1]
-        nextvalue = rb.data.value[t+1]
-      end
-      delta = rb.data.reward[t] + config.gamma * nextvalue * nextnonterminal - rb.data.value[t]
-      advantages[t] = lastgaelam = delta + config.gamma * config.gae_lambda * nextnonterminal * lastgaelam
-    end
-    returns = advantages + rb.data.value
+    advantages, returns = gae(
+      vcat(rb.data.value, next_value),
+      rb.data.reward,
+      vcat(rb.data.terminal, next_done),
+      config.gamma,
+      config.gae_lambda
+    )
 
     b_inds = 1:config.batch_size
-    # do I need to copy buffer here?
 
     for epoch in 1:config.update_epochs
       b_inds = shuffle(b_inds)

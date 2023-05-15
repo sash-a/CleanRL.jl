@@ -15,29 +15,33 @@ include("../utils/logger.jl")
 include("../utils/networks.jl")
 
 @kwdef struct Config
-  batch_size::Int = 512
   total_timesteps::Int = 500_000
+  batch_size::Int = 512
   num_minibatches::Int = 4
   update_epochs::Int = 4
+
   lr::Float64 = 2.5e-4
   gamma::Float64 = 0.99
   gae_lambda::Float64 = 0.95
+
   clip_coef::Float64 = 0.2
   ent_coeff::Float64 = 0.01
   v_coef::Float64 = 0.5
+
+  normalize_advantages::Bool = true
+  clip_value_loss::Bool = true
+  anneal_lr::Bool = true
 end
 
-function get_action_and_value(state::AbstractVecOrMat{Float64}, actor::Chain, critic::Chain, action::Union{VecOrMat{Int64},Nothing}=nothing)
+function action_and_value(state::AbstractVecOrMat{Float64}, actor::Chain, critic::Chain, action::Union{VecOrMat{Int64},Nothing}=nothing)
   logits = actor(state)
-  # the collect here is slow, but check_args=false is giving worse results :(
-  probs = Categorical.(collect.(eachcol(logits)))
+  probs = Categorical.(eachcol(logits), check_args=false)
+
   if action === nothing
     action = rand.(probs)
   end
 
-  lp = loglikelihood.(probs, action)
-
-  action, lp, entropy.(logits), critic(state)
+  action, loglikelihood.(probs, action), entropy.(logits), critic(state)
 end
 
 function gae(values::Vector{T}, rewards::Vector{T}, terminals::Vector{Bool}, γ::T, λ::T) where {T<:AbstractFloat}
@@ -68,24 +72,12 @@ function gae(values::Vector{T}, rewards::Vector{T}, terminals::Vector{Bool}, γ:
   advantages, value_target
 end
 
-
 function ppo(config::Config=Config())
   Logger.make_logger("ppo-2-test")
 
   env = CartPoleEnv()  # TODO make env configurable through argparse
 
-  # todo method
-  actor = Chain(
-    Dense(4, 64, relu),
-    Dense(64, 64, relu),
-    Dense(64, 2),
-    softmax,
-  )
-  critic = Chain(
-    Dense(4, 64, relu),
-    Dense(64, 64, relu),
-    Dense(64, 1)
-  )
+  actor, critic = Networks.make_actor_critic(env)
 
   minibatch_size = config.batch_size ÷ config.num_minibatches
   num_updates = config.total_timesteps ÷ config.batch_size
@@ -114,12 +106,15 @@ function ppo(config::Config=Config())
   next_done = is_terminated(env)
 
   for update in 1:num_updates
-    frac = 1.0 - (update - 1.0) / num_updates
-    opt.os[2].eta = frac * config.lr
+    if config.anneal_lr
+      frac = 1.0 - (update - 1.0) / num_updates
+      opt.os[2].eta = frac * config.lr
+    end
+
     for step in 1:config.batch_size
       global_step += 1
 
-      action, log_prob, entropy, value = get_action_and_value(next_obs, actor, critic)
+      action, log_prob, entropy, value = action_and_value(next_obs, actor, critic)
 
       # step env
       env(action[1])  # todo cartpole expects an int, but other envs may expect a vec
@@ -166,26 +161,34 @@ function ppo(config::Config=Config())
           end_ind = start + minibatch_size - 1
           mb_inds = b_inds[start:end_ind]
 
-          _, newlogprob, entropy, newvalue = get_action_and_value(rb.data.state[mb_inds, :]', actor, critic, rb.data.action[mb_inds, :])
-          logratio = dropdims(newlogprob; dims=2) - rb.data.logprob[mb_inds]
-          ratio = exp.(logratio)
+          _, newlogprob, entropy, newvalue = action_and_value(rb.data.state[mb_inds, :]', actor, critic, rb.data.action[mb_inds, :])
+          newlogprob = dropdims(newlogprob; dims=2)  # can we avoid these dropdims?
+          newvalue = dropdims(newvalue; dims=1)
 
-          # todo: norm adv?
+
           # policy loss
-          mb_advantages = (advantages[mb_inds] .- mean(advantages[mb_inds])) / (std(advantages[mb_inds]) .+ 1e-8)
+          mb_advantages = if config.normalize_advantages
+            (advantages[mb_inds] .- mean(advantages[mb_inds])) / (std(advantages[mb_inds]) .+ 1e-8)
+          else
+            advantages[mb_inds]
+          end
+
+          logratio = newlogprob - rb.data.logprob[mb_inds]
+          ratio = exp.(logratio)
           pg_loss1 = -mb_advantages .* ratio
           pg_loss2 = -mb_advantages .* clamp.(ratio, 1 - config.clip_coef, 1 + config.clip_coef)
           pg_loss = mean(max.(pg_loss1, pg_loss2))
 
           # value loss
-          # todo: optional clip
-          # v_loss = 0.5 * mean((dropdims(newvalue; dims=1) - returns[mb_inds]) .^ 2)
-          newvalue = dropdims(newvalue; dims=1)
-          v_loss_unclipped = mean(newvalue - returns[mb_inds] .^ 2)
-          v_clipped = rb.data.value[mb_inds] + clamp.(newvalue - rb.data.value[mb_inds], -config.clip_coef, config.clip_coef)
-          v_loss_clipped = (v_clipped - returns[mb_inds]) .^ 2
-          v_loss_max = max.(v_loss_unclipped, v_loss_clipped)
-          v_loss = 0.5 * mean(v_loss_max)
+          v_loss = if config.clip_value_loss
+            v_loss_unclipped = mean(newvalue - returns[mb_inds] .^ 2)
+            v_clipped = rb.data.value[mb_inds] + clamp.(newvalue - rb.data.value[mb_inds], -config.clip_coef, config.clip_coef)
+            v_loss_clipped = (v_clipped - returns[mb_inds]) .^ 2
+            v_loss_max = max.(v_loss_unclipped, v_loss_clipped)
+            0.5 * mean(v_loss_max)
+          else
+            0.5 * mean((newvalue - returns[mb_inds]) .^ 2)
+          end
 
           pg_loss - config.ent_coeff * mean(entropy) + config.v_coef * v_loss
         end
@@ -197,5 +200,3 @@ function ppo(config::Config=Config())
     Buffer.clear!(rb)
   end
 end
-
-# ppo()

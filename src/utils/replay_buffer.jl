@@ -50,5 +50,6 @@ function clear!(rb::ReplayBuffer)
   rb.size = 0
   rb.ptr = 1
 end
+
 end # module
 

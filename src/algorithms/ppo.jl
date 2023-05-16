@@ -97,6 +97,7 @@ function ppo(config::PPOConfig=PPOConfig())
 
     for step in 1:config.batch_size
       global_step += 1
+      episode_length += 1
 
       action, log_prob, entropy, value = action_and_value(next_obs, actor, critic)
 
@@ -118,7 +119,7 @@ function ppo(config::PPOConfig=PPOConfig())
       if next_done
         reset!(env)
         steps_per_sec = global_step / (time() - start_time)
-        @info "Episode Statistics" episode_return global_step steps_per_sec step
+        @info "Episode Statistics" episode_return episode_length global_step steps_per_sec
         episode_return = 0
         episode_length = 0
       end
@@ -149,7 +150,6 @@ function ppo(config::PPOConfig=PPOConfig())
           newlogprob = dropdims(newlogprob; dims=2)  # can we avoid these dropdims?
           newvalue = dropdims(newvalue; dims=1)
 
-
           # policy loss
           mb_advantages = if config.normalize_advantages
             (advantages[mb_inds] .- mean(advantages[mb_inds])) / (std(advantages[mb_inds]) .+ 1e-8)
@@ -177,6 +177,7 @@ function ppo(config::PPOConfig=PPOConfig())
           pg_loss - config.ent_coeff * mean(entropy) + config.v_coef * v_loss
         end
 
+        # todo: log loss components
         @info "Training Statistics" loss
         Flux.Optimise.update!(opt, params, gs)
       end

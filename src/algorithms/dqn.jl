@@ -83,7 +83,8 @@ function dqn(config::DQNConfig=DQNConfig())
     episode_return += reward(env)
     episode_length += 1
     if is_terminated(env)
-      @info "Episode Statistics" episode_return episode_length ϵ
+      steps_per_sec = trunc(global_step / (time() - start_time))
+      @info "Episode Statistics" episode_return episode_length global_step ϵ steps_per_sec
       episode_length, episode_return = 0, 0
 
       reset!(env)
@@ -112,8 +113,7 @@ function dqn(config::DQNConfig=DQNConfig())
       end
 
       if global_step % config.log_frequencey == 0
-        steps_per_second = trunc(global_step / (time() - start_time))
-        @info "Training Statistics" loss steps_per_second
+        @info "Training Statistics" loss
       end
     end
   end

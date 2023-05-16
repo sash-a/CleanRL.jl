@@ -1,22 +1,9 @@
-using ReinforcementLearningEnvironments: CartPoleEnv
-using ReinforcementLearningBase: reset!, reward, state, is_terminated, action_space, state_space, AbstractEnv
-
-using Flux
-using StatsBase: sample, Weights, loglikelihood, mean
-using Distributions: Categorical
-
-using Dates: now, format
-
-include("../utils/buffers.jl")
-include("../utils/config_parser.jl")
-include("../utils/logger.jl")
-include("../utils/networks.jl")
-
-
-Base.@kwdef struct Config
+Base.@kwdef struct A2CConfig
   run_name::String = format(now(), "yy-mm-dd|HH:MM:SS")
 
-  total_timesteps::Int = 500_000
+  lr::Float64 = 0.0001
+
+  total_timesteps::Int = 1_000_000
   min_replay_size::Int = 512
 
   gamma::Float64 = 0.99
@@ -40,17 +27,21 @@ end
 #  test harder envs
 #  mulitple V train steps
 #  normalise advantage
-#  lr
-function a2c()
-  config = ConfigParser.argparse_struct(Config())
+function a2c(config::A2CConfig=A2CConfig())
   Logger.make_logger("a2c|$(config.run_name)")
 
   env = CartPoleEnv()  # TODO make env configurable through argparse
 
-  actor, critic = Networks.make_actor_critic_nn(env)
-  opt = ADAM()
+  actor, critic = Networks.make_actor_critic(env)
+  opt = Flux.Optimiser(ClipNorm(0.5), Adam(config.lr))
 
-  rb = Buffers.ReplayQueue{Buffers.PGTransition}()
+  transition = (
+    state=rand(state_space(env)),
+    action=rand(action_space(env)),
+    reward=1.0,
+    terminal=true
+  )
+  rb = Buffer.ReplayBuffer(transition, config.min_replay_size * 2)
 
   episode_return = 0
   episode_length = 0
@@ -65,49 +56,51 @@ function a2c()
 
     env(action)
 
-    transition = Buffers.PGTransition(
-      obs,
-      action,
-      reward(env),
-      is_terminated(env)
+    transition = (
+      state=obs,
+      action=[action],
+      reward=[reward(env)],
+      terminal=[is_terminated(env)]
     )
-    Buffers.add!(rb, transition)
+    Buffer.add!(rb, transition)
 
     # Recording episode statistics
-    episode_return += reward(env)
+    episode_return += transition.reward[1]
     episode_length += 1
 
-    if is_terminated(env)
-      if length(rb.data) > config.min_replay_size  # training
-        data = sample(rb, length(rb.data))  # get all the data from the buffer
-        final_value = data.states |> eachcol |> last |> critic |> first
-        discounted_rewards = discounted_future_rewards(data.rewards, data.terminals, final_value, config.gamma)
+    if is_terminated(env)  # todo: might be missing a final transition
+      if rb.size > config.min_replay_size  # training
+        data = map(x -> x[1:rb.size, :], rb.data) # todo -1 or not here?
+        final_value = critic(state(env))[1]
+        discounted_rewards = discounted_future_rewards(vec(data.reward), vec(data.terminal), final_value, config.gamma)
 
         # critic update
         advantage = []
         critic_params = Flux.params(critic)
         critic_loss, critic_gs = Flux.withgradient(critic_params) do
-          values = critic(data.states)
+          values = critic(data.state')
           advantage = discounted_rewards - vec(values)
-          mean(advantage .^ 2)  # TODO: this loss is *really* high, is that normal?
+          mean(advantage .^ 2)
         end
         Flux.Optimise.update!(opt, critic_params, critic_gs)
 
         # actor update
         actor_params = Flux.params(actor)
         actor_loss, actor_gs = Flux.withgradient(actor_params) do
-          ac_dists = data.states |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
-          log_probs = loglikelihood.(ac_dists, data.actions)
+          ac_dists = data.state' |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
+          log_probs = loglikelihood.(ac_dists, data.action)
           -mean(log_probs .* advantage)
         end
         Flux.Optimise.update!(opt, actor_params, actor_gs)
 
         # logging
-        steps_per_second = trunc(global_step / (time() - start_time))
-        @info "Training Statistics" actor_loss critic_loss steps_per_second
-        @info "Episode Statistics" episode_return episode_length
+        @info "Training Statistics" actor_loss critic_loss
+
+        Buffer.clear!(rb)
       end
 
+      steps_per_sec = trunc(global_step / (time() - start_time))
+      @info "Episode Statistics" episode_return episode_length global_step steps_per_sec
       # reset counters
       episode_length, episode_return = 0, 0
       reset!(env)
@@ -116,4 +109,3 @@ function a2c()
   end
 end
 
-@time a2c()

@@ -4,8 +4,6 @@ using LoggingExtras: TeeLogger, FormatLogger, ConsoleLogger
 using LoggingFormats: JSON
 using TensorBoardLogger: TBLogger
 
-export make_logger
-
 function make_logger(run_name; to_terminal=true, to_tensorboard=true, to_json=false)
   """Creates a logger and sets it as the global_logger"""
   loggers = []

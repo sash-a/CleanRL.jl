@@ -1,5 +1,5 @@
 module ConfigParser
-"""ALlows for parsing a struct defined using the Base.@kwef macro into an command line args"""
+"""Allows for parsing a struct defined using the Base.@kwef macro into an command line args"""
 # not entirely convinced this is the best option, it keeps the code nice and concise,
 #  but doesn't allow for help text in CLI args
 

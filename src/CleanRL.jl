@@ -1,9 +1,11 @@
 module CleanRL
 
-using ReinforcementLearningEnvironments: CartPoleEnv
-using ReinforcementLearningBase: reset!, reward, state, is_terminated, action_space, state_space, AbstractEnv
+# must be before using ReinforcementLearning for gym envs
+using PyCall
+using ReinforcementLearning
 
 using Flux
+using Flux: Zygote
 using StatsBase: sample, Weights, loglikelihood, mean, entropy, std
 using Random: shuffle
 using Distributions: Categorical
@@ -15,8 +17,9 @@ include("utils/config_parser.jl")
 include("utils/logger.jl")
 include("utils/networks.jl")
 
-include("algorithms/ppo.jl")
 include("algorithms/dqn.jl")
+include("algorithms/ddpg.jl")
 include("algorithms/a2c.jl")
+include("algorithms/ppo.jl")
 
 end # module

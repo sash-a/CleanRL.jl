@@ -20,7 +20,6 @@ function make_ddpg_nn(env::AbstractEnv, exploration_noise::Float64)
   ob_size = length(state_space(env))
   ac_size = length(action_space(env))
 
-  # todo: add noise to the action?
   actor = Chain(
     Dense(ob_size, 64, tanh_fast),
     Dense(64, 64, tanh_fast),
@@ -48,8 +47,7 @@ get_q(critic, obs, act) = critic(vcat(obs, act))
 function ddpg(config::DDPGConfig=DDPGConfig())
   Logger.make_logger("ddpg|$(config.run_name)")
 
-  # env = PendulumEnv(continuous=true)  # TODO make env configurable through CLI
-  env = GymEnv("HalfCheetah-v3")
+  env = GymEnv("HalfCheetah-v3")  # TODO make env configurable through CLI
 
   actor, critic = make_ddpg_nn(env, config.exploration_noise)
   target_actor = deepcopy(actor)
@@ -75,7 +73,6 @@ function ddpg(config::DDPGConfig=DDPGConfig())
   start_time = time()
   reset!(env)
 
-  # todo: fill replay with random data at begining
   for global_step in 1:config.total_timesteps
     obs = deepcopy(state(env))  # state needs to be coppied otherwise state and next_state is the same
     # action selection
@@ -104,7 +101,7 @@ function ddpg(config::DDPGConfig=DDPGConfig())
     end
 
     # Learning
-    # todo too many transposes
+    # todo too many transposes?
     if (global_step > config.min_buff_size) && (global_step > config.warmup_steps)
       data = Buffer.sample(rb, config.batch_size)
 

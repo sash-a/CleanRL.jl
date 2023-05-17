@@ -1,6 +1,6 @@
 module Networks
 
-using ReinforcementLearningBase: action_space, state_space, AbstractEnv
+using ReinforcementLearning
 using Flux
 
 function mlp(layer_sizes::Vector{Int})

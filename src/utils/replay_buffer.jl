@@ -1,7 +1,6 @@
 module Buffer
 
 import StatsBase: sample
-using InvertedIndices
 
 mutable struct ReplayBuffer{TupleNames,TupleValues}
   data::NamedTuple{TupleNames,TupleValues}  # replay data

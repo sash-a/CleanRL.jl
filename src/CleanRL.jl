@@ -1,7 +1,8 @@
 module CleanRL
 
-using ReinforcementLearningEnvironments
-using ReinforcementLearningBase: reset!, reward, state, is_terminated, action_space, state_space, AbstractEnv
+# must be before using ReinforcementLearning for gym envs
+using PyCall
+using ReinforcementLearning
 
 using Flux
 using Flux: Zygote

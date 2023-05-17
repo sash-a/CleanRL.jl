@@ -1,24 +1,22 @@
 Base.@kwdef struct DDPGConfig
   run_name::String = format(now(), "yy-mm-dd|HH:MM:SS")
 
+  total_timesteps::Int = 5_000_000
+  buffer_size::Int64 = 1e5
+  min_buff_size::Int64 = 200
+  batch_size::Int64 = 120
+  warmup_steps::Int64 = 2500
   log_frequencey::Int = 1000
 
-  total_timesteps::Int = 5_000_000
-
-  buffer_size::Int64 = 10_000
-  min_buff_size::Int64 = 200
-
   lr::Float64 = 0.0001
-  train_freq::Int64 = 10
-  target_net_freq::Int64 = 100
   tau::Float64 = 0.005
-
-  batch_size::Int64 = 120
   gamma::Float64 = 0.99
+  exploration_noise::Float64 = 0.1
 end
 
 # todo: how to work with ClosedInterval to get correct action shape
-function make_ddpg_nn(env::AbstractEnv)
+# todo: move this to the networks class and create a NormalActorHead
+function make_ddpg_nn(env::AbstractEnv, exploration_noise::Float64)
   ob_size = length(state_space(env))
   ac_size = length(action_space(env))
 
@@ -27,7 +25,8 @@ function make_ddpg_nn(env::AbstractEnv)
     Dense(ob_size, 64, tanh_fast),
     Dense(64, 64, tanh_fast),
     Dense(64, ac_size, tanh_fast),
-    x -> x * 2
+    # Does .+ broadcast the same noise over all batches?
+    x -> x .* 2 .+ (randn(ac_size) * exploration_noise)
   )
   critic = Chain(
     Dense(ob_size + ac_size, 64, relu),
@@ -52,7 +51,7 @@ function ddpg(config::DDPGConfig=DDPGConfig())
   # env = PendulumEnv(continuous=true)  # TODO make env configurable through CLI
   env = GymEnv("HalfCheetah-v3")
 
-  actor, critic = make_ddpg_nn(env)
+  actor, critic = make_ddpg_nn(env, config.exploration_noise)
   target_actor = deepcopy(actor)
   target_critic = deepcopy(critic)
   actor_opt = Adam(config.lr)
@@ -67,16 +66,20 @@ function ddpg(config::DDPGConfig=DDPGConfig())
   )
 
   rb = Buffer.ReplayBuffer(transition, config.buffer_size)
+  # storing this here so we have to call down to python a little less
+  act_space = action_space(env)
 
   episode_return = 0
   episode_length = 0
 
   start_time = time()
   reset!(env)
+
   # todo: fill replay with random data at begining
   for global_step in 1:config.total_timesteps
     obs = deepcopy(state(env))  # state needs to be coppied otherwise state and next_state is the same
-    action = actor(obs)  # action selection
+    # action selection
+    action = global_step > config.warmup_steps ? actor(obs) : rand(act_space)
     env(action)  # step env
 
     # add to buffer
@@ -94,7 +97,7 @@ function ddpg(config::DDPGConfig=DDPGConfig())
     episode_length += 1
     if transition.terminal[1]
       steps_per_second = trunc(global_step / (time() - start_time))
-      @info "Episode Statistics" episode_return episode_length steps_per_second
+      @info "Episode Statistics" episode_return episode_length steps_per_second global_step
       episode_length, episode_return = 0, 0
 
       reset!(env)
@@ -102,7 +105,7 @@ function ddpg(config::DDPGConfig=DDPGConfig())
 
     # Learning
     # todo too many transposes
-    if (global_step > config.min_buff_size) && (global_step % config.train_freq == 0)
+    if (global_step > config.min_buff_size) && (global_step > config.warmup_steps)
       data = Buffer.sample(rb, config.batch_size)
 
       next_acts = target_actor(data.next_state')

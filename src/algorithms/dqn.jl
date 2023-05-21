@@ -5,7 +5,7 @@ Base.@kwdef struct DQNConfig
 
   total_timesteps::Int = 500_000
 
-  buffer_size::Int64 = 10_000
+  buffer_size::Int64 = 100_000
   min_buff_size::Int64 = 200
 
   lr::Float64 = 0.0001
@@ -16,7 +16,7 @@ Base.@kwdef struct DQNConfig
 
   epsilon_start::Float64 = 1.0
   epsilon_end::Float64 = 0.05
-  epsilon_duration::Float64 = 10_000
+  epsilon_duration::Float64 = 40_000
 end
 
 function make_nn(env::AbstractEnv)
@@ -57,9 +57,9 @@ function dqn(config::DQNConfig=DQNConfig())
   global_step = 0
 
   start_time = time()
-  reset!(env)
-  for global_step in 1:nthreads:config.total_timesteps
-    obs = deepcopy(state(env))  # state needs to be coppied otherwise state and next_state is the same
+  reset!(env; is_force=true)
+  obs = deepcopy(state(env))  # state needs to be coppied otherwise state and next_state is the same
+  for global_step in 0:nthreads:config.total_timesteps
     # action selection
     ϵ = ϵ_schedule(global_step)
     explore = rand() < ϵ
@@ -69,23 +69,25 @@ function dqn(config::DQNConfig=DQNConfig())
 
     # add to buffer
     rews = reward(env)
-    next_states = deepcopy(state(env))
+    next_obs = deepcopy(state(env))
     terms = is_terminated(env)
     for i in 1:nthreads
       transition = (
         state=obs[:, i],
         action=[action[i]],
         reward=[rews[i]],
-        next_state=next_states[:, i],
+        next_state=next_obs[:, i],
         terminal=[terms[i]]
       )
       Buffer.add!(rb, transition)
     end
+    obs = deepcopy(next_obs)
 
     # Recording episode statistics
     episode_returns += rews
     episode_lengths += ones(nthreads)
     if any(terms)
+      @show terms
       steps_per_sec = trunc(global_step / (time() - start_time))
       for i in 1:nthreads
         !terms[i] && continue  # only log if terminal
@@ -98,10 +100,11 @@ function dqn(config::DQNConfig=DQNConfig())
       end
 
       reset!(env)
+      obs = deepcopy(state(env))
     end
 
     # Learning
-    if (global_step > config.min_buff_size) && (global_step % config.train_freq == 0)
+    if (global_step > config.min_buff_size) && (global_step % (config.train_freq * nthreads) == 0)
       data = Buffer.sample(rb, config.batch_size)
       # Convert actions to CartesianIndexes so they can be used to index q matrix
       actions = CartesianIndex.(data.action, 1:length(data.action))
@@ -122,9 +125,7 @@ function dqn(config::DQNConfig=DQNConfig())
         target_net = deepcopy(q_net)
       end
 
-      if global_step % config.log_frequencey == 0
-        @info "Training Statistics" loss
-      end
+      @info "Training Statistics" loss
     end
   end
 end

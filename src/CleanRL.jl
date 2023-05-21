@@ -1,21 +1,25 @@
 module CleanRL
 
+using Base: Threads
+using Dates: now, format
+using Random: shuffle
+
 # must be before using ReinforcementLearning for gym envs
 using PyCall
 using ReinforcementLearning
+using GridWorlds
+
 
 using Flux
 using Flux: Zygote
 using StatsBase: sample, Weights, loglikelihood, mean, entropy, std
-using Random: shuffle
 using Distributions: Categorical
-
-using Dates: now, format
 
 include("utils/replay_buffer.jl")
 include("utils/config_parser.jl")
 include("utils/logger.jl")
 include("utils/networks.jl")
+include("utils/multi_thread_env.jl")
 
 include("algorithms/dqn.jl")
 include("algorithms/ddpg.jl")

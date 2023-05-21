@@ -20,8 +20,8 @@ Base.@kwdef struct DQNConfig
 end
 
 function make_nn(env::AbstractEnv)
-  in_size = length(state_space(env))
-  out_size = length(action_space(env))
+  in_size = length(single_state_space(env))
+  out_size = length(single_action_space(env))
   Chain(Dense(in_size, 120, relu), Dense(120, 84, relu), Dense(84, out_size))
 end
 
@@ -33,59 +33,69 @@ end
 
 function dqn(config::DQNConfig=DQNConfig())
   Logger.make_logger("dqn|$(config.run_name)")
-
-  env = CartPoleEnv()  # TODO make env configurable through CLI
+  nthreads = Threads.nthreads()
+  # TODO make env configurable through CLI
+  env = MultiThreadEnv(() -> CartPoleEnv(), nthreads)
 
   q_net = make_nn(env)
   target_net = deepcopy(q_net)
   opt = Adam(config.lr)
 
   transition = (
-    state=rand(state_space(env)),
-    action=rand(action_space(env)),
+    state=rand(single_state_space(env)),
+    action=rand(single_action_space(env)),
     reward=1.0,
-    next_state=rand(state_space(env)),
+    next_state=rand(single_state_space(env)),
     terminal=true
   )
   rb = Buffer.ReplayBuffer(transition, config.buffer_size)
 
   ϵ_schedule = t -> linear_schedule(config.epsilon_start, config.epsilon_end, config.epsilon_duration, t)
 
-  episode_return = 0
-  episode_length = 0
+  episode_returns = zeros(nthreads)
+  episode_lengths = zeros(nthreads)
+  global_step = 0
 
   start_time = time()
   reset!(env)
-  for global_step in 1:config.total_timesteps
+  for global_step in 1:nthreads:config.total_timesteps
     obs = deepcopy(state(env))  # state needs to be coppied otherwise state and next_state is the same
     # action selection
     ϵ = ϵ_schedule(global_step)
-    action = if rand() < ϵ
-      env |> action_space |> rand
-    else
-      qs = q_net(obs)
-      argmax(qs)
-    end
+    explore = rand() < ϵ
+    action = explore ? rand(action_space(env)) : vec(argmax.(q_net(obs)))
 
     env(action)  # step env
 
     # add to buffer
-    transition = (
-      state=obs,
-      action=[action],
-      reward=[reward(env)],
-      next_state=deepcopy(state(env)),
-      terminal=[is_terminated(env)]
-    )
-    Buffer.add!(rb, transition)
+    rews = reward(env)
+    next_states = deepcopy(state(env))
+    terms = is_terminated(env)
+    for i in 1:nthreads
+      transition = (
+        state=obs[:, i],
+        action=[action[i]],
+        reward=[rews[i]],
+        next_state=next_states[:, i],
+        terminal=[terms[i]]
+      )
+      Buffer.add!(rb, transition)
+    end
 
     # Recording episode statistics
-    episode_return += reward(env)
-    episode_length += 1
-    if is_terminated(env)
+    episode_returns += rews
+    episode_lengths += ones(nthreads)
+    if any(terms)
       steps_per_sec = trunc(global_step / (time() - start_time))
-      @info "Episode Statistics" episode_return episode_length global_step ϵ steps_per_sec
-      episode_length, episode_return = 0, 0
+      for i in 1:nthreads
+        !terms[i] && continue  # only log if terminal
+
+        episode_return = episode_returns[i]
+        episode_length = episode_lengths[i]
+        @info "Episode Statistics" episode_return episode_length global_step ϵ steps_per_sec
+        episode_lengths[i] = 0
+        episode_returns[i] = 0
+      end
 
       reset!(env)
     end

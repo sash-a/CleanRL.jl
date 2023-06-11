@@ -54,14 +54,15 @@ function dqn(config::DQNConfig=DQNConfig())
 
   episode_returns = zeros(nt)
   episode_lengths = zeros(nt)
+  last_log_step = 0
 
   start_time = time()
   reset!(env; is_force=true)
-  for global_step in 1:config.total_timesteps
+  for n_iters in 1:config.total_timesteps÷nt
     obs = deepcopy(state(env))  # state needs to be coppied otherwise state and next_state is the same
 
     # action selection
-    ϵ = ϵ_schedule(nt * global_step)
+    ϵ = ϵ_schedule(nt * n_iters)
     explore = rand() < ϵ
     action = explore ? rand(action_space(env)) : argmax.(eachcol(q_net(obs)))
 
@@ -85,22 +86,27 @@ function dqn(config::DQNConfig=DQNConfig())
     episode_returns += rewards
     episode_lengths += ones(nt)
     if any(terminals)
-      steps_per_sec = nt * trunc(global_step / (time() - start_time))
+      steps_per_sec = nt * trunc(n_iters / (time() - start_time))
       for i in 1:nt
         !terminals[i] && continue  # only log if terminal
 
         episode_return = episode_returns[i]
         episode_length = episode_lengths[i]
-        @info "Episode Statistics" episode_return episode_length global_step ϵ steps_per_sec
+
+        # todo: would be nice if we could pass step instead of log_step_increment
+        log_step_inc = last_log_step == 0 ? 0 : n_iters * nt - last_log_step
+
+        @info "Episode Statistics" episode_return episode_length n_iters ϵ steps_per_sec log_step_increment = log_step_inc
         episode_lengths[i] = 0
         episode_returns[i] = 0
+        last_log_step = n_iters * nt
       end
 
       reset!(env)
     end
 
     # Learning
-    if (global_step > config.min_buff_size) && (global_step % config.train_freq * nt == 0)
+    if (n_iters > config.min_buff_size) && (n_iters % config.train_freq * nt == 0)
       data = Buffer.sample(rb, config.batch_size)
       # Convert actions to CartesianIndexes so they can be used to index q matrix
       actions = CartesianIndex.(data.action, 1:length(data.action))
@@ -117,12 +123,15 @@ function dqn(config::DQNConfig=DQNConfig())
       end
       Flux.Optimise.update!(opt, params, gs)
 
-      if global_step % config.target_net_freq == 0
+      if n_iters % config.target_net_freq == 0
         target_net = deepcopy(q_net)
       end
 
-      if global_step % config.log_frequencey == 0
-        @info "Training Statistics" loss
+      if n_iters % config.log_frequencey == 0
+        # todo: would be nice if we could pass step instead of log_step_increment
+        log_step_inc = last_log_step == 0 ? 0 : n_iters * nt - last_log_step
+        @info "Training Statistics" loss log_step_increment = log_step_inc
+        last_log_step = n_iters * nt
       end
     end
   end

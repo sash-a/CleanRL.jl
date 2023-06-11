@@ -109,15 +109,15 @@ function dqn(config::DQNConfig=DQNConfig())
     if (n_iters > config.min_buff_size) && (n_iters % config.train_freq * nt == 0)
       data = Buffer.sample(rb, config.batch_size)
       # Convert actions to CartesianIndexes so they can be used to index q matrix
-      actions = CartesianIndex.(data.action, 1:length(data.action))
+      actions = CartesianIndex.(vec(data.action), 1:length(data.action))
 
-      next_q = data.next_state' |> target_net |> eachcol .|> maximum
-      td_target = data.reward + config.gamma * next_q .* (1.0 .- data.terminal)
+      next_q = data.next_state |> target_net |> eachcol .|> maximum
+      td_target = vec(data.reward) + config.gamma * next_q .* (1.0 .- vec(data.terminal))
 
       # Get grads and update model
       params = Flux.params(q_net)
       loss, gs = Flux.withgradient(params) do
-        q = data.state' |> q_net
+        q = q_net(data.state)
         q = q[actions]
         Flux.mse(td_target, q)
       end

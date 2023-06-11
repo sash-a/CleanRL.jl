@@ -2,6 +2,9 @@ module Buffer
 
 import StatsBase: sample
 
+"""Returns the size of x, if x is a scalar it's size is (1,)."""
+_size_in_buffer(x::Union{AbstractArray,Real}) = ndims(x) == 0 ? (1,) : size(x)
+
 mutable struct ReplayBuffer{TupleNames,TupleValues}
   data::NamedTuple{TupleNames,TupleValues}  # replay data
   capacity::Int  # max buffer size
@@ -10,16 +13,18 @@ mutable struct ReplayBuffer{TupleNames,TupleValues}
 
   # todo: make the column-major - julia performance tips
   function ReplayBuffer(transition::NamedTuple, capacity::Int)
-    data = map(x -> zeros(eltype(x), (capacity, size(x)...)), transition)
+    data = map(x -> zeros(eltype(x), (_size_in_buffer(x)..., capacity)), transition)
     new{keys(data),typeof(values(data))}(data, capacity, 1, 0)
   end
 end
+
+
 
 function add!(rb::ReplayBuffer{TupleNames,A}, transition::NamedTuple{TupleNames,B}) where {TupleNames} where {A} where {B}
   for (key, value) in pairs(transition)
     # it would be nice to add an inbounds here, but I often 
     # have size mismatches when debugging and that will get in the way
-    rb.data[key][rb.ptr, :] = value
+    rb.data[key][:, rb.ptr] = value
   end
 
   # increment/wrap `ptr`
@@ -35,13 +40,13 @@ function sample(rb::ReplayBuffer, n::Int; ordered=false)
   @assert n <= rb.size
 
   inds = sample(1:rb.size, n, replace=false, ordered=ordered)
-  @inbounds map(x -> x[inds, :], rb.data)
+  @inbounds map(x -> x[:, inds], rb.data)
 end
 
 function Base.last(rb::ReplayBuffer)
   @assert rb.size > 0
   i = rb.ptr - 1 < 1 ? rb.capacity : rb.ptr - 1
-  @inbounds map(x -> x[i, :], rb.data)
+  @inbounds map(x -> x[:, i], rb.data)
 end
 
 function clear!(rb::ReplayBuffer)

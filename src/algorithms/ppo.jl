@@ -17,7 +17,7 @@
   anneal_lr::Bool = true
 end
 
-function action_and_value(state::AbstractVecOrMat{Float64}, actor::Chain, critic::Chain, action::Union{VecOrMat{Int64},Nothing}=nothing)
+function action_and_value(state::AbstractVecOrMat{Float64}, actor::Chain, critic::Chain, action::Union{AbstractVector,Nothing}=nothing)
   logits = actor(state)
   probs = Categorical.(eachcol(logits), check_args=false)
 
@@ -128,9 +128,9 @@ function ppo(config::PPOConfig=PPOConfig())
     # bootstrap value if not done
     next_value = critic(next_obs)[1]
     advantages, returns = gae(
-      vcat(rb.data.value, next_value),
-      rb.data.reward,
-      vcat(rb.data.terminal, next_done),
+      vcat(vec(rb.data.value), next_value),
+      vec(rb.data.reward),
+      vcat(vec(rb.data.terminal), next_done),
       config.gamma,
       config.gae_lambda
     )
@@ -146,18 +146,23 @@ function ppo(config::PPOConfig=PPOConfig())
           end_ind = start + minibatch_size - 1
           mb_inds = b_inds[start:end_ind]
 
-          _, newlogprob, entropy, newvalue = action_and_value(rb.data.state[mb_inds, :]', actor, critic, rb.data.action[mb_inds, :])
-          newlogprob = dropdims(newlogprob; dims=2)  # can we avoid these dropdims?
-          newvalue = dropdims(newvalue; dims=1)
+          mb_states = @view rb.data.state[:, mb_inds]
+          mb_actions = vec(@view rb.data.action[:, mb_inds])
+          mb_advantages = @view advantages[mb_inds]
+          mb_logprobs = vec(@view rb.data.logprob[mb_inds])
+          mb_values = @view rb.data.value[mb_inds]
+          mb_returns = @view returns[mb_inds]
+
+          _, newlogprob, entropy, newvalue = action_and_value(mb_states, actor, critic, mb_actions)
+          newlogprob = vec(newlogprob)
+          newvalue = vec(newvalue)
 
           # policy loss
           mb_advantages = if config.normalize_advantages
-            (advantages[mb_inds] .- mean(advantages[mb_inds])) / (std(advantages[mb_inds]) .+ 1e-8)
-          else
-            advantages[mb_inds]
+            (mb_advantages .- mean(mb_advantages)) / (std(mb_advantages) .+ 1e-8)
           end
 
-          logratio = newlogprob - rb.data.logprob[mb_inds]
+          logratio = newlogprob - mb_logprobs
           ratio = exp.(logratio)
           pg_loss1 = -mb_advantages .* ratio
           pg_loss2 = -mb_advantages .* clamp.(ratio, 1 - config.clip_coef, 1 + config.clip_coef)
@@ -165,13 +170,13 @@ function ppo(config::PPOConfig=PPOConfig())
 
           # value loss
           v_loss = if config.clip_value_loss
-            v_loss_unclipped = mean(newvalue - returns[mb_inds] .^ 2)
-            v_clipped = rb.data.value[mb_inds] + clamp.(newvalue - rb.data.value[mb_inds], -config.clip_coef, config.clip_coef)
-            v_loss_clipped = (v_clipped - returns[mb_inds]) .^ 2
+            v_loss_unclipped = mean(newvalue - mb_returns .^ 2)
+            v_clipped = mb_values + clamp.(newvalue - mb_values, -config.clip_coef, config.clip_coef)
+            v_loss_clipped = (v_clipped - mb_returns) .^ 2
             v_loss_max = max.(v_loss_unclipped, v_loss_clipped)
             0.5 * mean(v_loss_max)
           else
-            0.5 * mean((newvalue - returns[mb_inds]) .^ 2)
+            0.5 * mean((newvalue - mb_returns) .^ 2)
           end
 
           pg_loss - config.ent_coeff * mean(entropy) + config.v_coef * v_loss

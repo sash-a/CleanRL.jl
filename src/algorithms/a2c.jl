@@ -70,7 +70,7 @@ function a2c(config::A2CConfig=A2CConfig())
 
     if is_terminated(env)  # todo: might be missing a final transition
       if rb.size > config.min_replay_size  # training
-        data = map(x -> x[1:rb.size, :], rb.data) # todo -1 or not here?
+        data = map(x -> x[:, 1:rb.size], rb.data) # todo -1 or not here?
         final_value = critic(state(env))[1]
         discounted_rewards = discounted_future_rewards(vec(data.reward), vec(data.terminal), final_value, config.gamma)
 
@@ -78,7 +78,7 @@ function a2c(config::A2CConfig=A2CConfig())
         advantage = []
         critic_params = Flux.params(critic)
         critic_loss, critic_gs = Flux.withgradient(critic_params) do
-          values = critic(data.state')
+          values = critic(data.state)
           advantage = discounted_rewards - vec(values)
           mean(advantage .^ 2)
         end
@@ -87,8 +87,8 @@ function a2c(config::A2CConfig=A2CConfig())
         # actor update
         actor_params = Flux.params(actor)
         actor_loss, actor_gs = Flux.withgradient(actor_params) do
-          ac_dists = data.state' |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
-          log_probs = loglikelihood.(ac_dists, data.action)
+          ac_dists = data.state |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
+          log_probs = loglikelihood.(ac_dists, vec(data.action))
           -mean(log_probs .* advantage)
         end
         Flux.Optimise.update!(opt, actor_params, actor_gs)

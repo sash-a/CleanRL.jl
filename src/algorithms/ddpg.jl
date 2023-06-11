@@ -93,8 +93,8 @@ function ddpg(config::DDPGConfig=DDPGConfig())
     episode_return += transition.reward[1]
     episode_length += 1
     if transition.terminal[1]
-      steps_per_second = trunc(global_step / (time() - start_time))
-      @info "Episode Statistics" episode_return episode_length steps_per_second global_step
+      steps_per_sec = trunc(global_step / (time() - start_time))
+      @info "Episode Statistics" episode_return episode_length steps_per_sec global_step
       episode_length, episode_return = 0, 0
 
       reset!(env)
@@ -105,14 +105,14 @@ function ddpg(config::DDPGConfig=DDPGConfig())
     if (global_step > config.min_buff_size) && (global_step > config.warmup_steps)
       data = Buffer.sample(rb, config.batch_size)
 
-      next_acts = target_actor(data.next_state')
-      next_q = get_q(target_critic, data.next_state', next_acts)'
+      next_acts = target_actor(data.next_state)
+      next_q = get_q(target_critic, data.next_state, next_acts)
       td_target = data.reward + config.gamma * next_q .* (1.0 .- data.terminal)
 
       # critic update
       critic_params = Flux.params(critic)
       critic_loss, gs = Flux.withgradient(critic_params) do
-        q = get_q(critic, data.state', data.action')'
+        q = get_q(critic, data.state, data.action)
         Flux.mse(td_target, q)
       end
       Flux.Optimise.update!(critic_opt, critic_params, gs)
@@ -120,7 +120,7 @@ function ddpg(config::DDPGConfig=DDPGConfig())
       # actor update
       actor_params = Flux.params(actor)
       actor_loss, gs = Flux.withgradient(actor_params) do
-        -mean(get_q(critic, data.state', actor(data.state')))
+        -mean(get_q(critic, data.state, actor(data.state)))
       end
       Flux.Optimise.update!(actor_opt, actor_params, gs)
 

@@ -2,7 +2,7 @@ module CleanRL
 
 using Base: Threads
 using Dates: now, format
-using Random: shuffle
+using Random: shuffle, Xoshiro
 
 # must be before using ReinforcementLearning for gym envs
 using PyCall

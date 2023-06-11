@@ -5,7 +5,7 @@ Base.@kwdef struct DQNConfig
 
   total_timesteps::Int = 500_000
 
-  buffer_size::Int64 = 100_000
+  buffer_size::Int64 = 10_000
   min_buff_size::Int64 = 200
 
   lr::Float64 = 0.0001
@@ -16,7 +16,7 @@ Base.@kwdef struct DQNConfig
 
   epsilon_start::Float64 = 1.0
   epsilon_end::Float64 = 0.05
-  epsilon_duration::Float64 = 40_000
+  epsilon_duration::Float64 = 10_000
 end
 
 function make_nn(env::AbstractEnv)
@@ -32,10 +32,10 @@ end
 
 
 function dqn(config::DQNConfig=DQNConfig())
-  Logger.make_logger("dqn|$(config.run_name)")
-  nthreads = Threads.nthreads()
-  # TODO make env configurable through CLI
-  env = MultiThreadEnv(() -> CartPoleEnv(), nthreads)
+  nt = Threads.nthreads()
+  Logger.make_logger("dqn|$(config.run_name)"; to_terminal=false)
+
+  env = MultiThreadEnv([CartPoleEnv(rng=Xoshiro(i)) for i in 1:nt])  # TODO make env configurable through CLI
 
   q_net = make_nn(env)
   target_net = deepcopy(q_net)
@@ -52,45 +52,42 @@ function dqn(config::DQNConfig=DQNConfig())
 
   ϵ_schedule = t -> linear_schedule(config.epsilon_start, config.epsilon_end, config.epsilon_duration, t)
 
-  episode_returns = zeros(nthreads)
-  episode_lengths = zeros(nthreads)
-  global_step = 0
+  episode_returns = zeros(nt)
+  episode_lengths = zeros(nt)
 
   start_time = time()
   reset!(env; is_force=true)
-  obs = deepcopy(state(env))  # state needs to be coppied otherwise state and next_state is the same
-  for global_step in 0:nthreads:config.total_timesteps
+  for global_step in 1:config.total_timesteps
+    obs = deepcopy(state(env))  # state needs to be coppied otherwise state and next_state is the same
+
     # action selection
-    ϵ = ϵ_schedule(global_step)
+    ϵ = ϵ_schedule(nt * global_step)
     explore = rand() < ϵ
-    action = explore ? rand(action_space(env)) : vec(argmax.(q_net(obs)))
+    action = explore ? rand(action_space(env)) : argmax.(eachcol(q_net(obs)))
 
     env(action)  # step env
 
     # add to buffer
-    rews = reward(env)
-    next_obs = deepcopy(state(env))
-    terms = is_terminated(env)
-    for i in 1:nthreads
+    rewards = reward(env)
+    terminals = is_terminated(env)
+    @inbounds for i in 1:nt
+      # splitting up the batched transition so each row in rb is a single transition
       transition = (
         state=obs[:, i],
-        action=[action[i]],
-        reward=[rews[i]],
-        next_state=next_obs[:, i],
-        terminal=[terms[i]]
+        action=action[i, :],
+        reward=rewards[i, :],
+        next_state=deepcopy(state(env)[:, i]),
+        terminal=terminals[i, :]
       )
       Buffer.add!(rb, transition)
     end
-    obs = deepcopy(next_obs)
 
-    # Recording episode statistics
-    episode_returns += rews
-    episode_lengths += ones(nthreads)
-    if any(terms)
-      @show terms
-      steps_per_sec = trunc(global_step / (time() - start_time))
-      for i in 1:nthreads
-        !terms[i] && continue  # only log if terminal
+    episode_returns += rewards
+    episode_lengths += ones(nt)
+    if any(terminals)
+      steps_per_sec = nt * trunc(global_step / (time() - start_time))
+      for i in 1:nt
+        !terminals[i] && continue  # only log if terminal
 
         episode_return = episode_returns[i]
         episode_length = episode_lengths[i]
@@ -100,11 +97,10 @@ function dqn(config::DQNConfig=DQNConfig())
       end
 
       reset!(env)
-      obs = deepcopy(state(env))
     end
 
     # Learning
-    if (global_step > config.min_buff_size) && (global_step % (config.train_freq * nthreads) == 0)
+    if (global_step > config.min_buff_size) && (global_step % config.train_freq * nt == 0)
       data = Buffer.sample(rb, config.batch_size)
       # Convert actions to CartesianIndexes so they can be used to index q matrix
       actions = CartesianIndex.(data.action, 1:length(data.action))
@@ -125,7 +121,9 @@ function dqn(config::DQNConfig=DQNConfig())
         target_net = deepcopy(q_net)
       end
 
-      @info "Training Statistics" loss
+      if global_step % config.log_frequencey == 0
+        @info "Training Statistics" loss
+      end
     end
   end
 end

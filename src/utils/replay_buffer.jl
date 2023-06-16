@@ -1,6 +1,7 @@
 module Buffer
 
 import StatsBase: sample
+using EllipsisNotation
 
 """Returns the size of x, if x is a scalar it's size is (1,)."""
 _size_in_buffer(x::Union{AbstractArray,Real}) = ndims(x) == 0 ? (1,) : size(x)
@@ -24,7 +25,8 @@ function add!(rb::ReplayBuffer{TupleNames,A}, transition::NamedTuple{TupleNames,
   for (key, value) in pairs(transition)
     # it would be nice to add an inbounds here, but I often 
     # have size mismatches when debugging and that will get in the way
-    rb.data[key][:, rb.ptr] = value
+    # @show key, size(value), size(rb.data[key])
+    rb.data[key][.., rb.ptr] = value
   end
 
   # increment/wrap `ptr`
@@ -40,13 +42,13 @@ function sample(rb::ReplayBuffer, n::Int; ordered=false)
   @assert n <= rb.size
 
   inds = sample(1:rb.size, n, replace=false, ordered=ordered)
-  @inbounds map(x -> x[:, inds], rb.data)
+  @inbounds map(x -> x[.., inds], rb.data)
 end
 
 function Base.last(rb::ReplayBuffer)
   @assert rb.size > 0
   i = rb.ptr - 1 < 1 ? rb.capacity : rb.ptr - 1
-  @inbounds map(x -> x[:, i], rb.data)
+  @inbounds map(x -> x[.., i], rb.data)
 end
 
 function clear!(rb::ReplayBuffer)

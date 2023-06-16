@@ -25,18 +25,14 @@ function get_action(obs::AbstractVecOrMat{Float64}, actor::Chain)
   action, loglikelihood.(probs, action), entropy.(logits)
 end
 
-function action_and_value(state::AbstractVecOrMat{Float64}, actor::Chain, critic::Chain, action::Union{AbstractVector,Nothing}=nothing)
-  logits = actor(state)
+function logprob_actions(obs::AbstractVecOrMat{Float64}, actor::Chain, actions::AbstractVector)
+  logits = actor(obs)
   probs = Categorical.(eachcol(logits), check_args=false)
 
-  if action === nothing
-    action = rand.(probs)
-  end
-
-  action, loglikelihood.(probs, action), entropy.(logits), critic(state)
+  loglikelihood.(probs, actions), entropy.(logits)
 end
 
-function gae(values::Vector{T}, rewards::Vector{T}, terminals::Vector{Bool}, γ::T, λ::T) where {T<:AbstractFloat}
+function gae(values::AbstractVector{T}, rewards::AbstractVector{T}, terminals::AbstractVector{Bool}, γ::T, λ::T) where {T<:AbstractFloat}
   """
   Generalized advantage estimation.
 
@@ -61,7 +57,7 @@ function gae(values::Vector{T}, rewards::Vector{T}, terminals::Vector{Bool}, γ:
   end
 
   value_target = advantages + values[1:end-1]
-  advantages, value_target
+  advantages #= , value_target =#
 end
 
 function ppo(config::PPOConfig=PPOConfig())
@@ -80,12 +76,12 @@ function ppo(config::PPOConfig=PPOConfig())
   opt = Flux.Optimiser(ClipNorm(0.5), Adam(config.lr))  # one opt per network?
 
   transition = (
-    state=rand(single_state_space(env)),
-    action=rand(single_action_space(env)),
-    logprob=1.0,
-    reward=1.0,
-    terminal=true,
-    value=1.0
+    state=rand(state_space(env)),
+    action=rand(action_space(env)),
+    logprob=ones(nt),
+    reward=ones(nt),
+    terminal=fill(true, nt),
+    value=ones(nt),
   )
 
   rb = Buffer.ReplayBuffer(transition, config.batch_size)
@@ -111,32 +107,29 @@ function ppo(config::PPOConfig=PPOConfig())
       global_step += nt
       episode_lengths .+= 1
 
-      # todo:
-      # action, log_prob, entropy = get_action(next_obs, actor)
-      # value = critic(next_obs)
-      action, log_prob, entropy, value = action_and_value(next_obs, actor, critic)
+      action, log_prob, entropy = get_action(next_obs, actor)
+      value = critic(next_obs)
 
       # step env
       env(action)
 
       rewards = reward(env)
-      for i in 1:nt
-        Buffer.add!(rb, (
-          state=next_obs[:, i],
-          action=action[i, :],
-          logprob=log_prob[i, :],
-          reward=rewards[i, :],
-          terminal=next_done[i, :],
-          value=value[:, i],
-        ))
-      end
+      Buffer.add!(rb, (
+        state=next_obs,
+        action=action,
+        logprob=log_prob,
+        reward=rewards,
+        terminal=next_done,
+        value=value,
+      ))
 
+      # todo: I don't like next obs - put this above
       next_obs = deepcopy(state(env))
       next_done = is_terminated(env)
       episode_returns += rewards
 
       if any(next_done)
-        steps_per_sec = nt * trunc(global_step / (time() - start_time))
+        steps_per_sec = trunc(global_step / (time() - start_time))
         for i in 1:nt
           !next_done[i] && continue  # only log if terminal
 
@@ -156,17 +149,32 @@ function ppo(config::PPOConfig=PPOConfig())
       end
     end
 
+    # todo: this won't work because transitions are added 1 after the other
+    #  need to shape replay data as (batch, num_env, ...)
     # bootstrap value if not done
-    next_value = critic(next_obs)[1]
-    advantages, returns = gae(
-      vcat(vec(rb.data.value), next_value),
-      vec(rb.data.reward),
-      vcat(vec(rb.data.terminal), next_done),
+    next_obs = state(env)
+    next_done = is_terminated(env)
+    next_values = critic(next_obs)
+
+    advantages = gae.(
+      eachrow(hcat(rb.data.value, next_values')),
+      eachrow(rb.data.reward),
+      eachrow(hcat(rb.data.terminal, next_done)),
       config.gamma,
       config.gae_lambda
     )
+    # advantages = reduce(hcat, advantages)'
+    advantages = hcat(advantages...)'
+    returns = advantages + rb.data.value
 
     b_inds = 1:config.batch_size
+
+    states = reshape(rb.data.state, :, config.batch_size * nt)
+    actions = reshape(rb.data.action, :, config.batch_size * nt)
+    logprobs = reshape(rb.data.logprob, :, config.batch_size * nt)
+    values = reshape(rb.data.value, :, config.batch_size * nt)
+    advantages = reshape(advantages, :, config.batch_size * nt)
+    returns = reshape(returns, :, config.batch_size * nt)
 
     for epoch in 1:config.update_epochs
       b_inds = shuffle(b_inds)
@@ -177,14 +185,15 @@ function ppo(config::PPOConfig=PPOConfig())
           end_ind = start + minibatch_size - 1
           mb_inds = b_inds[start:end_ind]
 
-          mb_states = @view rb.data.state[:, mb_inds]
-          mb_actions = vec(@view rb.data.action[:, mb_inds])
+          mb_states = @view states[:, mb_inds]
+          mb_actions = vec(@view actions[:, mb_inds])
           mb_advantages = @view advantages[mb_inds]
-          mb_logprobs = vec(@view rb.data.logprob[mb_inds])
-          mb_values = @view rb.data.value[mb_inds]
+          mb_logprobs = vec(@view logprobs[mb_inds])
+          mb_values = @view values[mb_inds]
           mb_returns = @view returns[mb_inds]
 
-          _, newlogprob, entropy, newvalue = action_and_value(mb_states, actor, critic, mb_actions)
+          newlogprob, entropy = logprob_actions(mb_states, actor, mb_actions)
+          newvalue = critic(mb_states)
           newlogprob = vec(newlogprob)
           newvalue = vec(newvalue)
 
@@ -196,8 +205,8 @@ function ppo(config::PPOConfig=PPOConfig())
 
           logratio = newlogprob - mb_logprobs
           ratio = exp.(logratio)
-          pg_loss1 = -mb_advantages .* ratio
-          pg_loss2 = -mb_advantages .* clamp.(ratio, 1 - config.clip_coef, 1 + config.clip_coef)
+          pg_loss1 = @. -mb_advantages * ratio
+          pg_loss2 = @. -mb_advantages * clamp.(ratio, 1 - config.clip_coef, 1 + config.clip_coef)
           pg_loss = mean(max.(pg_loss1, pg_loss2))
 
           # value loss

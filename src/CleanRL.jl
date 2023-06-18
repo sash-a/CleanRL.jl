@@ -5,10 +5,9 @@ using Dates: now, format
 using Random: shuffle, Xoshiro
 
 # must be before using ReinforcementLearning for gym envs
-using PyCall
+# using PyCall
 using ReinforcementLearning
 using GridWorlds
-
 
 using Flux
 using Flux: Zygote
@@ -20,6 +19,7 @@ include("utils/config_parser.jl")
 include("utils/logger.jl")
 include("utils/networks.jl")
 include("utils/multi_thread_env.jl")
+include("utils/single_precision_wrapper.jl")
 
 include("algorithms/dqn.jl")
 include("algorithms/ddpg.jl")

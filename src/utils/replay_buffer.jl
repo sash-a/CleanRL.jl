@@ -12,7 +12,6 @@ mutable struct ReplayBuffer{TupleNames,TupleValues}
   ptr::Int  # pointer to current index
   size::Int  # current array size
 
-  # todo: make the column-major - julia performance tips
   function ReplayBuffer(transition::NamedTuple, capacity::Int)
     data = map(x -> zeros(eltype(x), (_size_in_buffer(x)..., capacity)), transition)
     new{keys(data),typeof(values(data))}(data, capacity, 1, 0)
@@ -22,10 +21,7 @@ end
 
 
 function add!(rb::ReplayBuffer{TupleNames,A}, transition::NamedTuple{TupleNames,B}) where {TupleNames} where {A} where {B}
-  for (key, value) in pairs(transition)
-    # it would be nice to add an inbounds here, but I often 
-    # have size mismatches when debugging and that will get in the way
-    # @show key, size(value), size(rb.data[key])
+  @inbounds for (key, value) in pairs(transition)
     rb.data[key][.., rb.ptr] = value
   end
 
@@ -37,7 +33,6 @@ function add!(rb::ReplayBuffer{TupleNames,A}, transition::NamedTuple{TupleNames,
   rb
 end
 
-# How to remove items for policy grad methods
 function sample(rb::ReplayBuffer, n::Int; ordered=false)
   @assert n <= rb.size
 

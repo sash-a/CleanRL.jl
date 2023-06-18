@@ -41,4 +41,7 @@ function make_actor_critic(env::AbstractEnv, hidden_sizes::Vector{Int}=Int[64, 6
   make_actor_critic(action_space(env), state_space(env), hidden_sizes)
 end
 
+# todo: remove this once updated to new flux version
+f16(m) = Flux.paramtype(Float16, m)
+
 end  # module

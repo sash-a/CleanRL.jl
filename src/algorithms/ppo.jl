@@ -4,20 +4,20 @@
   num_minibatches::Int = 4
   update_epochs::Int = 4
 
-  lr::Float64 = 2.5e-4
-  gamma::Float64 = 0.99
-  gae_lambda::Float64 = 0.95
+  lr::Float32 = 2.5f-4
+  gamma::Float32 = 0.99
+  gae_lambda::Float32 = 0.95
 
-  clip_coef::Float64 = 0.2
-  ent_coeff::Float64 = 0.01
-  v_coef::Float64 = 0.5
+  clip_coef::Float32 = 0.2
+  ent_coeff::Float32 = 0.01
+  v_coef::Float32 = 0.5
 
   normalize_advantages::Bool = true
   clip_value_loss::Bool = true
   anneal_lr::Bool = true
 end
 
-function get_action(obs::AbstractVecOrMat{Float64}, actor::Chain)
+function get_action(obs::AbstractVecOrMat{Float32}, actor::Chain)
   logits = actor(obs)
   probs = Categorical.(eachcol(logits), check_args=false)
   action = rand.(probs)
@@ -25,7 +25,7 @@ function get_action(obs::AbstractVecOrMat{Float64}, actor::Chain)
   action, loglikelihood.(probs, action), entropy.(logits)
 end
 
-function logprob_actions(obs::AbstractVecOrMat{Float64}, actor::Chain, actions::AbstractVector)
+function logprob_actions(obs::AbstractVecOrMat{Float32}, actor::Chain, actions::AbstractVector)
   logits = actor(obs)
   probs = Categorical.(eachcol(logits), check_args=false)
 
@@ -56,32 +56,35 @@ function gae(values::AbstractVector{T}, rewards::AbstractVector{T}, terminals::A
     advantages[t] = gae
   end
 
-  value_target = advantages + values[1:end-1]
-  advantages #= , value_target =#
+  advantages
 end
 
 function ppo(config::PPOConfig=PPOConfig())
   nt = Threads.nthreads()
   Logger.make_logger("ppo-2-test"; to_terminal=false)
 
-  env = MultiThreadEnv([CartPoleEnv(rng=Xoshiro(i)) for i in 1:nt])  # TODO make env configurable through CLI
+  # TODO make env configurable through CLI
+  env = MultiThreadEnv(nt) do
+    seed = hash(Threads.threadid())
+    CartPoleEnv(T=Float32, rng=Xoshiro(seed))
+  end
 
   single_obs_space = single_state_space(env)
   single_act_space = single_action_space(env)
-  actor, critic = Networks.make_actor_critic(single_act_space, single_obs_space)
+  actor, critic = Networks.make_actor_critic(single_act_space, single_obs_space) .|> Flux.f32
 
   minibatch_size = config.batch_size ÷ config.num_minibatches
-  num_updates = config.total_timesteps ÷ config.batch_size
+  num_updates = config.total_timesteps ÷ config.batch_size ÷ nt
 
   opt = Flux.Optimiser(ClipNorm(0.5), Adam(config.lr))  # one opt per network?
 
   transition = (
-    state=rand(state_space(env)),
-    action=rand(action_space(env)),
-    logprob=ones(nt),
-    reward=ones(nt),
+    state=Float32.(rand(state_space(env))),
+    action=Float32.(rand(action_space(env))),
+    logprob=Float32.(ones(nt)),
+    reward=Float32.(ones(nt)),
     terminal=fill(true, nt),
-    value=ones(nt),
+    value=Float32.(ones(nt)),
   )
 
   rb = Buffer.ReplayBuffer(transition, config.batch_size)
@@ -163,8 +166,8 @@ function ppo(config::PPOConfig=PPOConfig())
       config.gamma,
       config.gae_lambda
     )
-    # advantages = reduce(hcat, advantages)'
-    advantages = hcat(advantages...)'
+    advantages = reduce(hcat, advantages)'
+    # advantages = hcat(advantages...)'
     returns = advantages + rb.data.value
 
     b_inds = 1:config.batch_size

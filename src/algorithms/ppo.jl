@@ -18,14 +18,15 @@
 end
 
 function action_and_value(state::AbstractVecOrMat{Float64}, actor::Chain, critic::Chain, action::Union{AbstractVector,Nothing}=nothing)
-  logits = actor(state)
+  logits = actor(state)  # note these are sofmaxed in the network
   probs = Categorical.(eachcol(logits), check_args=false)
 
   if action === nothing
     action = rand.(probs)
   end
 
-  action, loglikelihood.(probs, action), entropy.(logits), critic(state)
+  # it's likely faster to do these calculations manually: softmax, logsoftmax[action]
+  action, logpdf.(probs, action), entropy.(logits), critic(state)
 end
 
 function gae(values::Vector{T}, rewards::Vector{T}, terminals::Vector{Bool}, γ::T, λ::T) where {T<:AbstractFloat}
@@ -57,9 +58,9 @@ function gae(values::Vector{T}, rewards::Vector{T}, terminals::Vector{Bool}, γ:
 end
 
 function ppo(config::PPOConfig=PPOConfig())
-  Logger.make_logger("ppo-2-test")
+  Logger.make_logger("ppo-2-test"; to_terminal=false)
 
-  env = CartPoleEnv()  # TODO make env configurable through argparse
+  env = CartPoleEnv(max_steps=500)  # TODO make env configurable through argparse
 
   actor, critic = Networks.make_actor_critic(env)
 
@@ -82,6 +83,7 @@ function ppo(config::PPOConfig=PPOConfig())
   global_step = 0
   episode_return = 0
   episode_length = 0
+  last_log_step = 0
 
   start_time = time()
   reset!(env)
@@ -119,7 +121,12 @@ function ppo(config::PPOConfig=PPOConfig())
       if next_done
         reset!(env)
         steps_per_sec = global_step / (time() - start_time)
-        @info "Episode Statistics" episode_return episode_length global_step steps_per_sec
+
+        # todo: would be nice if we could pass step instead of log_step_increment
+        log_step_inc = last_log_step == 0 ? 0 : global_step - last_log_step
+        @info "Episode Statistics" episode_return episode_length global_step steps_per_sec log_step_increment = log_step_inc
+        last_log_step = global_step
+
         episode_return = 0
         episode_length = 0
       end
@@ -142,6 +149,10 @@ function ppo(config::PPOConfig=PPOConfig())
 
       params = Flux.params(actor, critic)
       for start in 1:minibatch_size:config.batch_size
+        pg_loss = 0.0
+        v_loss = 0.0
+        entropy_loss = 0.0
+
         loss, gs = Flux.withgradient(params) do
           end_ind = start + minibatch_size - 1
           mb_inds = b_inds[start:end_ind]
@@ -179,14 +190,18 @@ function ppo(config::PPOConfig=PPOConfig())
             0.5 * mean((newvalue - mb_returns) .^ 2)
           end
 
-          pg_loss - config.ent_coeff * mean(entropy) + config.v_coef * v_loss
+          entropy_loss = mean(entropy)
+          pg_loss - config.ent_coeff * entropy_loss + config.v_coef * v_loss
         end
 
         # todo: log loss components
-        @info "Training Statistics" loss
+        log_step_inc = last_log_step == 0 ? 0 : global_step - last_log_step
+        @info "Training Statistics" loss pg_loss v_loss entropy_loss log_step_increment = log_step_inc
+        last_log_step = deepcopy(global_step)
+
         Flux.Optimise.update!(opt, params, gs)
       end
     end
-    Buffer.clear!(rb)
+    # Buffer.clear!(rb)
   end
 end

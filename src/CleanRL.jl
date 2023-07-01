@@ -8,7 +8,7 @@ using Flux
 using Flux: Zygote
 using StatsBase: sample, Weights, loglikelihood, mean, entropy, std
 using Random: shuffle
-using Distributions: Categorical
+using Distributions: Categorical, logpdf
 
 using Dates: now, format
 

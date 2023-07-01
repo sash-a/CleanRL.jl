@@ -3,10 +3,11 @@ module Networks
 using ReinforcementLearning
 using Flux
 
-function mlp(layer_sizes::Vector{Int})
+function mlp(layer_sizes::Vector{Int}, activation=tanh_fast, gain=sqrt(2))
   layers = []
   for i in 1:length(layer_sizes)-1
-    push!(layers, Dense(layer_sizes[i], layer_sizes[i+1], relu))
+    init = Flux.orthogonal(; gain=gain)
+    push!(layers, Dense(layer_sizes[i], layer_sizes[i+1], activation; init=init))
   end
   Chain(layers...)
 end
@@ -17,8 +18,13 @@ function make_actor_critic_shared(env::AbstractEnv, hidden_sizes::Vector{Int}=In
 
   ob_net = mlp(vcat(in_size, hidden_sizes))
 
-  actor = Chain(ob_net, Dense(last(hidden_sizes), out_size), softmax)
-  critic = Chain(ob_net, Dense(last(hidden_sizes), 1))
+  actor_final_gain = Flux.orthogonal(; gain=0.01)
+  critic_final_gain = Flux.orthogonal(; gain=1.0)
+  actor_final_layer = Dense(last(hidden_sizes), out_size; init=actor_final_gain)
+  critic_final_layer = Dense(last(hidden_sizes), 1; init=critic_final_gain)
+
+  actor = Chain(ob_net, actor_final_layer, softmax)
+  critic = Chain(ob_net, critic_final_layer)
 
   actor, critic
 end
@@ -27,8 +33,13 @@ function make_actor_critic(env::AbstractEnv, hidden_sizes::Vector{Int}=Int[64, 6
   in_size = length(state_space(env))
   out_size = length(action_space(env))
 
-  actor = Chain(mlp(vcat(in_size, hidden_sizes)), Dense(last(hidden_sizes), out_size), softmax)
-  critic = Chain(mlp(vcat(in_size, hidden_sizes)), Dense(last(hidden_sizes), 1))
+  actor_final_gain = Flux.orthogonal(; gain=0.01)
+  critic_final_gain = Flux.orthogonal(; gain=1.0)
+  actor_final_layer = Dense(last(hidden_sizes), out_size; init=actor_final_gain)
+  critic_final_layer = Dense(last(hidden_sizes), 1; init=critic_final_gain)
+
+  actor = Chain(mlp(vcat(in_size, hidden_sizes)), actor_final_layer, softmax)
+  critic = Chain(mlp(vcat(in_size, hidden_sizes)), critic_final_layer)
 
   actor, critic
 end

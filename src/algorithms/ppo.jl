@@ -18,13 +18,14 @@
 end
 
 function action_and_value(state::AbstractVecOrMat{Float64}, actor::Chain, critic::Chain, action::Union{AbstractVector,Nothing}=nothing)
-  logits = actor(state)
+  logits = actor(state)  # note these are sofmaxed in the network
   probs = Categorical.(eachcol(logits), check_args=false)
 
   if action === nothing
     action = rand.(probs)
   end
 
+  # it's likely faster to do these calculations manually: softmax, logsoftmax[action]
   action, logpdf.(probs, action), entropy.(logits), critic(state)
 end
 
@@ -109,8 +110,8 @@ function ppo(config::PPOConfig=PPOConfig())
         state=next_obs,
         action=action,
         logprob=log_prob,
-        reward=[deepcopy(reward(env))],
-        terminal=[deepcopy(next_done)],
+        reward=[reward(env)],
+        terminal=[next_done],
         value=value,
       ))
       next_obs = deepcopy(state(env))
@@ -132,29 +133,14 @@ function ppo(config::PPOConfig=PPOConfig())
     end
 
     # bootstrap value if not done
-    # I don't think this is correct if we're in a terminal state I think next_value should be 0? (maybe that is handled in gae?)
     next_value = critic(next_obs)[1]
-    # advantages, returns = gae(
-    #   vcat(vec(rb.data.value), next_value),
-    #   vec(rb.data.reward),
-    #   vcat(vec(rb.data.terminal), next_done),
-    #   config.gamma,
-    #   config.gae_lambda
-    # )
-    advantages = zeros(config.batch_size)
-    lastgaelam = 0
-    for t in config.batch_size-1:-1:1
-      if t == config.batch_size - 1
-        nextnonterminal = 1.0 - next_done
-        nextvalues = next_value
-      else
-        nextnonterminal = 1.0 - rb.data.terminal[t+1]
-        nextvalues = rb.data.value[t+1]
-      end
-      delta = rb.data.reward[t] + config.gamma * nextvalues * nextnonterminal - rb.data.value[t]
-      advantages[t] = lastgaelam = delta + config.gamma * config.gae_lambda * nextnonterminal * lastgaelam
-    end
-    returns = vec(advantages) + vec(rb.data.value)
+    advantages, returns = gae(
+      vcat(vec(rb.data.value), next_value),
+      vec(rb.data.reward),
+      vcat(vec(rb.data.terminal), next_done),
+      config.gamma,
+      config.gae_lambda
+    )
 
     b_inds = 1:config.batch_size
 

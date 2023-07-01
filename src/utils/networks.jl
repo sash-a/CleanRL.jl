@@ -28,8 +28,13 @@ function make_actor_critic(env::AbstractEnv, hidden_sizes::Vector{Int}=Int[64, 6
   in_size = length(state_space(env))
   out_size = length(action_space(env))
 
-  actor = Chain(mlp(vcat(in_size, hidden_sizes)), Dense(last(hidden_sizes), out_size), softmax)
-  critic = Chain(mlp(vcat(in_size, hidden_sizes)), Dense(last(hidden_sizes), 1))
+  actor_final_gain = Flux.orthogonal(; gain=0.01)
+  critic_final_gain = Flux.orthogonal(; gain=1.0)
+  actor_final_layer = Dense(last(hidden_sizes), out_size; init=actor_final_gain)
+  critic_final_layer = Dense(last(hidden_sizes), 1; init=critic_final_gain)
+
+  actor = Chain(mlp(vcat(in_size, hidden_sizes)), actor_final_layer)
+  critic = Chain(mlp(vcat(in_size, hidden_sizes)), critic_final_layer)
 
   actor, critic
 end

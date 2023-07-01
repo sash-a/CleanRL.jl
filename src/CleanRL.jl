@@ -7,12 +7,13 @@ using Random: shuffle, Xoshiro
 # must be before using ReinforcementLearning for gym envs
 # using PyCall
 using ReinforcementLearning
-using GridWorlds
-
+# using GridWorlds
+#
 using Flux
 using Flux: Zygote
 using StatsBase: sample, Weights, loglikelihood, mean, entropy, std
-using Distributions: Categorical
+using Random: shuffle
+using Distributions: Categorical, logpdf
 
 include("utils/replay_buffer.jl")
 include("utils/config_parser.jl")

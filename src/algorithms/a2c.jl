@@ -30,7 +30,7 @@ end
 function a2c(config::A2CConfig=A2CConfig())
   Logger.make_logger("a2c|$(config.run_name)")
 
-  env = CartPoleEnv()  # TODO make env configurable through argparse
+  env = CartPoleEnv(max_steps=500)  # TODO make env configurable through argparse
 
   actor, critic = Networks.make_actor_critic(env)
   opt = Flux.Optimiser(ClipNorm(0.5), Adam(config.lr))
@@ -88,7 +88,7 @@ function a2c(config::A2CConfig=A2CConfig())
         actor_params = Flux.params(actor)
         actor_loss, actor_gs = Flux.withgradient(actor_params) do
           ac_dists = data.state |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
-          log_probs = loglikelihood.(ac_dists, vec(data.action))
+          log_probs = logpdf.(ac_dists, vec(data.action))
           -mean(log_probs .* advantage)
         end
         Flux.Optimise.update!(opt, actor_params, actor_gs)

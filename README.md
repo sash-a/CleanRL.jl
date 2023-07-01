@@ -23,4 +23,4 @@ Inspired by [CleanRL](https://github.com/vwxyzjn/cleanrl)
 * Make individual file runners e.g experiments/run_ppo.(jl/sh)
 
 ## TODO (Investigate):
-* Profile PPO - order of magnitued slower than a2c and dqn
+* Profile PPO

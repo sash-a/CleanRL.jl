@@ -25,7 +25,7 @@ function action_and_value(state::AbstractVecOrMat{Float64}, actor::Chain, critic
     action = rand.(probs)
   end
 
-  action, loglikelihood.(probs, action), entropy.(logits), critic(state)
+  action, logpdf.(probs, action), entropy.(logits), critic(state)
 end
 
 function gae(values::Vector{T}, rewards::Vector{T}, terminals::Vector{Bool}, γ::T, λ::T) where {T<:AbstractFloat}
@@ -57,9 +57,9 @@ function gae(values::Vector{T}, rewards::Vector{T}, terminals::Vector{Bool}, γ:
 end
 
 function ppo(config::PPOConfig=PPOConfig())
-  Logger.make_logger("ppo-2-test")
+  Logger.make_logger("ppo-2-test"; to_terminal=false)
 
-  env = CartPoleEnv()  # TODO make env configurable through argparse
+  env = CartPoleEnv(max_steps=500)  # TODO make env configurable through argparse
 
   actor, critic = Networks.make_actor_critic(env)
 
@@ -82,6 +82,7 @@ function ppo(config::PPOConfig=PPOConfig())
   global_step = 0
   episode_return = 0
   episode_length = 0
+  last_log_step = 0
 
   start_time = time()
   reset!(env)
@@ -108,8 +109,8 @@ function ppo(config::PPOConfig=PPOConfig())
         state=next_obs,
         action=action,
         logprob=log_prob,
-        reward=[reward(env)],
-        terminal=[next_done],
+        reward=[deepcopy(reward(env))],
+        terminal=[deepcopy(next_done)],
         value=value,
       ))
       next_obs = deepcopy(state(env))
@@ -119,21 +120,41 @@ function ppo(config::PPOConfig=PPOConfig())
       if next_done
         reset!(env)
         steps_per_sec = global_step / (time() - start_time)
-        @info "Episode Statistics" episode_return episode_length global_step steps_per_sec
+
+        # todo: would be nice if we could pass step instead of log_step_increment
+        log_step_inc = last_log_step == 0 ? 0 : global_step - last_log_step
+        @info "Episode Statistics" episode_return episode_length global_step steps_per_sec log_step_increment = log_step_inc
+        last_log_step = global_step
+
         episode_return = 0
         episode_length = 0
       end
     end
 
     # bootstrap value if not done
+    # I don't think this is correct if we're in a terminal state I think next_value should be 0? (maybe that is handled in gae?)
     next_value = critic(next_obs)[1]
-    advantages, returns = gae(
-      vcat(vec(rb.data.value), next_value),
-      vec(rb.data.reward),
-      vcat(vec(rb.data.terminal), next_done),
-      config.gamma,
-      config.gae_lambda
-    )
+    # advantages, returns = gae(
+    #   vcat(vec(rb.data.value), next_value),
+    #   vec(rb.data.reward),
+    #   vcat(vec(rb.data.terminal), next_done),
+    #   config.gamma,
+    #   config.gae_lambda
+    # )
+    advantages = zeros(config.batch_size)
+    lastgaelam = 0
+    for t in config.batch_size-1:-1:1
+      if t == config.batch_size - 1
+        nextnonterminal = 1.0 - next_done
+        nextvalues = next_value
+      else
+        nextnonterminal = 1.0 - rb.data.terminal[t+1]
+        nextvalues = rb.data.value[t+1]
+      end
+      delta = rb.data.reward[t] + config.gamma * nextvalues * nextnonterminal - rb.data.value[t]
+      advantages[t] = lastgaelam = delta + config.gamma * config.gae_lambda * nextnonterminal * lastgaelam
+    end
+    returns = vec(advantages) + vec(rb.data.value)
 
     b_inds = 1:config.batch_size
 
@@ -142,6 +163,10 @@ function ppo(config::PPOConfig=PPOConfig())
 
       params = Flux.params(actor, critic)
       for start in 1:minibatch_size:config.batch_size
+        pg_loss = 0.0
+        v_loss = 0.0
+        entropy_loss = 0.0
+
         loss, gs = Flux.withgradient(params) do
           end_ind = start + minibatch_size - 1
           mb_inds = b_inds[start:end_ind]
@@ -179,14 +204,18 @@ function ppo(config::PPOConfig=PPOConfig())
             0.5 * mean((newvalue - mb_returns) .^ 2)
           end
 
-          pg_loss - config.ent_coeff * mean(entropy) + config.v_coef * v_loss
+          entropy_loss = mean(entropy)
+          pg_loss - config.ent_coeff * entropy_loss + config.v_coef * v_loss
         end
 
         # todo: log loss components
-        @info "Training Statistics" loss
+        log_step_inc = last_log_step == 0 ? 0 : global_step - last_log_step
+        @info "Training Statistics" loss pg_loss v_loss entropy_loss log_step_increment = log_step_inc
+        last_log_step = deepcopy(global_step)
+
         Flux.Optimise.update!(opt, params, gs)
       end
     end
-    Buffer.clear!(rb)
+    # Buffer.clear!(rb)
   end
 end

@@ -3,10 +3,11 @@ module Networks
 using ReinforcementLearning
 using Flux
 
-function mlp(layer_sizes::Vector{Int})
+function mlp(layer_sizes::Vector{Int}, activation=tanh_fast, gain=sqrt(2))
   layers = []
   for i in 1:length(layer_sizes)-1
-    push!(layers, Dense(layer_sizes[i], layer_sizes[i+1], relu))
+    init = Flux.orthogonal(; gain=gain)
+    push!(layers, Dense(layer_sizes[i], layer_sizes[i+1], activation; init=init))
   end
   Chain(layers...)
 end

@@ -13,7 +13,10 @@ using ReinforcementLearning
 using Flux
 using Flux: Zygote
 using StatsBase: sample, Weights, loglikelihood, mean, entropy, std
+using Random: shuffle
 using Distributions: Categorical, logpdf
+
+using Dates: now, format
 
 include("utils/replay_buffer.jl")
 include("utils/config_parser.jl")

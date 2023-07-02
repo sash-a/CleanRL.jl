@@ -1,6 +1,6 @@
 @kwdef struct PPOConfig
   total_timesteps::Int = 500_000
-  batch_size::Int = 512
+  num_steps::Int = 32  # recommend: num_threads * num_steps ~= 512
   num_minibatches::Int = 4
   update_epochs::Int = 4
 
@@ -22,14 +22,14 @@ function get_action(obs::AbstractVecOrMat{Float64}, actor::Chain)
   probs = Categorical.(eachcol(logits), check_args=false)
   action = rand.(probs)
 
-  action, loglikelihood.(probs, action), entropy.(logits)
+  action, logpdf.(probs, action), entropy.(logits)
 end
 
 function logprob_actions(obs::AbstractVecOrMat{Float64}, actor::Chain, actions::AbstractVector)
   logits = actor(obs)
   probs = Categorical.(eachcol(logits), check_args=false)
 
-  loglikelihood.(probs, actions), entropy.(logits)
+  logpdf.(probs, actions), entropy.(logits)
 end
 
 function gae(values::AbstractVector{T}, rewards::AbstractVector{T}, terminals::AbstractVector{Bool}, γ::T, λ::T) where {T<:AbstractFloat}
@@ -56,22 +56,22 @@ function gae(values::AbstractVector{T}, rewards::AbstractVector{T}, terminals::A
     advantages[t] = gae
   end
 
-  value_target = advantages + values[1:end-1]
-  advantages #= , value_target =#
+  advantages
 end
 
 function ppo(config::PPOConfig=PPOConfig())
   nt = Threads.nthreads()
-  Logger.make_logger("ppo-2-test"; to_terminal=false)
+  Logger.make_logger("ppo-2-test"; to_terminal=true)
 
-  env = MultiThreadEnv([CartPoleEnv(rng=Xoshiro(i)) for i in 1:nt])  # TODO make env configurable through CLI
+  env = MultiThreadEnv([CartPoleEnv(max_steps=500, rng=Xoshiro(i)) for i in 1:nt])  # TODO make env configurable through CLI
 
   single_obs_space = single_state_space(env)
   single_act_space = single_action_space(env)
   actor, critic = Networks.make_actor_critic(single_act_space, single_obs_space)
 
-  minibatch_size = config.batch_size ÷ config.num_minibatches
-  num_updates = config.total_timesteps ÷ config.batch_size
+  batch_size = config.num_steps * nt
+  minibatch_size = batch_size ÷ config.num_minibatches
+  num_updates = config.total_timesteps ÷ batch_size
 
   opt = Flux.Optimiser(ClipNorm(0.5), Adam(config.lr))  # one opt per network?
 
@@ -84,7 +84,7 @@ function ppo(config::PPOConfig=PPOConfig())
     value=ones(nt),
   )
 
-  rb = Buffer.ReplayBuffer(transition, config.batch_size)
+  rb = Buffer.ReplayBuffer(transition, config.num_steps)
 
   global_step = 0
   last_log_step = 0
@@ -103,7 +103,7 @@ function ppo(config::PPOConfig=PPOConfig())
       opt.os[2].eta = frac * config.lr
     end
 
-    for step in 1:config.batch_size
+    for step in 1:config.num_steps
       global_step += nt
       episode_lengths .+= 1
 
@@ -163,34 +163,36 @@ function ppo(config::PPOConfig=PPOConfig())
       config.gamma,
       config.gae_lambda
     )
-    # advantages = reduce(hcat, advantages)'
-    advantages = hcat(advantages...)'
+    advantages = reduce(hcat, advantages)'
+    # advantages = hcat(advantages...)'
     returns = advantages + rb.data.value
 
-    b_inds = 1:config.batch_size
+    b_inds = 1:batch_size
 
-    states = reshape(rb.data.state, :, config.batch_size * nt)
-    actions = reshape(rb.data.action, :, config.batch_size * nt)
-    logprobs = reshape(rb.data.logprob, :, config.batch_size * nt)
-    values = reshape(rb.data.value, :, config.batch_size * nt)
-    advantages = reshape(advantages, :, config.batch_size * nt)
-    returns = reshape(returns, :, config.batch_size * nt)
+    states = reshape(rb.data.state, :, batch_size)
+    actions = reshape(rb.data.action, :, batch_size)
+    logprobs = reshape(rb.data.logprob, :, batch_size)
+    values = reshape(rb.data.value, :, batch_size)
+    advantages = reshape(advantages, :, batch_size)
+    returns = reshape(returns, :, batch_size)
 
     for epoch in 1:config.update_epochs
       b_inds = shuffle(b_inds)
 
-      params = Flux.params(actor, critic)
-      for start in 1:minibatch_size:config.batch_size
+      for start in 1:minibatch_size:batch_size
+        pg_loss, v_loss, entropy_loss = 0, 0, 0
+        params = Flux.params(actor, critic)
+
         loss, gs = Flux.withgradient(params) do
           end_ind = start + minibatch_size - 1
           mb_inds = b_inds[start:end_ind]
 
           mb_states = @view states[:, mb_inds]
           mb_actions = vec(@view actions[:, mb_inds])
-          mb_advantages = @view advantages[mb_inds]
+          mb_advantages = vec(@view advantages[mb_inds])
           mb_logprobs = vec(@view logprobs[mb_inds])
-          mb_values = @view values[mb_inds]
-          mb_returns = @view returns[mb_inds]
+          mb_values = vec(@view values[mb_inds])
+          mb_returns = vec(@view returns[mb_inds])
 
           newlogprob, entropy = logprob_actions(mb_states, actor, mb_actions)
           newvalue = critic(mb_states)
@@ -221,17 +223,19 @@ function ppo(config::PPOConfig=PPOConfig())
             0.5 * mean((newvalue - mb_returns) .^ 2)
           end
 
-          entropy = mean(entropy)
-          pg_loss - config.ent_coeff * entropy + config.v_coef * v_loss
+          entropy_loss = mean(entropy)
+          pg_loss - config.ent_coeff * entropy_loss + config.v_coef * v_loss
         end
 
         log_step_inc = last_log_step == 0 ? 0 : global_step - last_log_step
         # todo: log loss components
-        @info "Training Statistics" loss log_step_increment = log_step_inc
+        @info "Training Statistics" loss pg_loss v_loss entropy_loss log_step_increment = log_step_inc
         last_log_step = deepcopy(global_step)
+
         Flux.Optimise.update!(opt, params, gs)
       end
     end
-    Buffer.clear!(rb)
+    # Buffer.clear!(rb)
   end
 end
+

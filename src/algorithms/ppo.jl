@@ -71,7 +71,7 @@ function ppo(config::PPOConfig=PPOConfig())
 
   single_obs_space = single_state_space(env)
   single_act_space = single_action_space(env)
-  actor, critic = Networks.make_actor_critic(single_act_space, single_obs_space) .|> f32
+  actor, critic = Networks.make_actor_critic(single_act_space, single_obs_space) .|> Flux.f32
 
   batch_size = config.num_steps * nt
   minibatch_size = batch_size ÷ config.num_minibatches
@@ -183,9 +183,9 @@ function ppo(config::PPOConfig=PPOConfig())
     for epoch in 1:config.update_epochs
       b_inds = shuffle(b_inds)
 
+      params = Flux.params(actor, critic)
       for start in 1:minibatch_size:batch_size
         pg_loss, v_loss, entropy_loss = 0.0, 0.0, 0.0
-        params = Flux.params(actor, critic)
 
         loss, gs = Flux.withgradient(params) do
           end_ind = start + minibatch_size - 1

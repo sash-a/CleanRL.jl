@@ -5,7 +5,7 @@ using Dates: now, format
 using Random: shuffle, Xoshiro
 
 # must be before using ReinforcementLearning for gym envs
-using PyCall
+# using PyCall
 using ReinforcementLearning
 # using GridWorlds
 

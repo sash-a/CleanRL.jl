@@ -20,18 +20,30 @@ end
 
 function get_action(obs::AbstractVecOrMat{Float32}, actor::Chain)
   logits = actor(obs)
-  probs = Categorical.(eachcol(logits), check_args=false)
-  action = rand.(probs)
+  probs = softmax(logits)
+  logprobs = logsoftmax(logits)
 
-  action, logpdf.(probs, action), entropy.(logits)
+  action = sample.(Weights.(eachcol(probs)))
+  batch_size = last(size(obs))  # batch is last dim
+  action_ind = CartesianIndex.(action, 1:batch_size)  # for 2D indexing
+  logprob_action = logprobs[action_ind]
+
+  action, logprob_action
 end
 
 function logprob_actions(obs::AbstractVecOrMat{Float32}, actor::Chain, actions::AbstractVector)
   logits = actor(obs)
-  probs = Categorical.(eachcol(logits), check_args=false)
+  probs = softmax(logits)
+  logprobs = logsoftmax(logits)
 
-  logpdf.(probs, actions), entropy.(logits)
+  batch_size = last(size(obs))  # batch is last dim
+  action_ind = CartesianIndex.(actions, 1:batch_size)  # for 2D indexing
+  logprob_action = logprobs[action_ind]
+  entropy = -sum.(probs .* logprobs)
+
+  logprob_action, entropy
 end
+
 
 function gae(values::AbstractVector{T}, rewards::AbstractVector{T}, terminals::AbstractVector{Bool}, γ::T, λ::T) where {T<:AbstractFloat}
   """
@@ -82,7 +94,7 @@ function ppo(config::PPOConfig=PPOConfig())
 
   transition = (
     state=Float32.(rand(state_space(env))),
-    action=Float32.(rand(action_space(env))),
+    action=Int32.(rand(action_space(env))),
     logprob=Float32.(ones(nt)),
     reward=Float32.(ones(nt)),
     terminal=fill(true, nt),
@@ -112,7 +124,7 @@ function ppo(config::PPOConfig=PPOConfig())
       global_step += nt
       episode_lengths .+= 1
 
-      action, log_prob, entropy = get_action(next_obs, actor)
+      action, log_prob = get_action(next_obs, actor)
       value = critic(next_obs)
 
       # step env

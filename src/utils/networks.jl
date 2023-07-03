@@ -23,7 +23,7 @@ function make_actor_critic_shared(action_space, obs_space, hidden_sizes::Vector{
   actor_final_layer = Dense(last(hidden_sizes), out_size; init=actor_final_gain)
   critic_final_layer = Dense(last(hidden_sizes), 1; init=critic_final_gain)
 
-  actor = Chain(ob_net, actor_final_layer, softmax)
+  actor = Chain(ob_net, actor_final_layer)
   critic = Chain(ob_net, critic_final_layer)
 
   actor, critic
@@ -42,7 +42,7 @@ function make_actor_critic(action_space, obs_space, hidden_sizes::Vector{Int}=In
   actor_final_layer = Dense(last(hidden_sizes), out_size; init=actor_final_gain)
   critic_final_layer = Dense(last(hidden_sizes), 1; init=critic_final_gain)
 
-  actor = Chain(mlp(vcat(in_size, hidden_sizes)), actor_final_layer, softmax)
+  actor = Chain(mlp(vcat(in_size, hidden_sizes)), actor_final_layer)
   critic = Chain(mlp(vcat(in_size, hidden_sizes)), critic_final_layer)
 
   actor, critic

@@ -1,7 +1,7 @@
 @kwdef struct PPOConfig
   total_timesteps::Int = 500_000
-  num_steps::Int = 8
-  num_envs::Int = 8
+  num_steps::Int = 32
+  num_envs::Int = 4
   num_minibatches::Int = 4
   update_epochs::Int = 4
 

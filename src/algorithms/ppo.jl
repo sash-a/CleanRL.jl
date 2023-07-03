@@ -1,10 +1,11 @@
 @kwdef struct PPOConfig
   total_timesteps::Int = 500_000
-  num_steps::Int = 32  # recommend: num_threads * num_steps ~= 512
+  num_steps::Int = 8
+  num_envs::Int = 8
   num_minibatches::Int = 4
   update_epochs::Int = 4
 
-  lr::Float32 = 2.5e-4
+  lr::Float32 = 2.5f-4
   gamma::Float32 = 0.99
   gae_lambda::Float32 = 0.95
 
@@ -60,10 +61,10 @@ function gae(values::AbstractVector{T}, rewards::AbstractVector{T}, terminals::A
 end
 
 function ppo(config::PPOConfig=PPOConfig())
-  nt = Threads.nthreads()
-  Logger.make_logger("ppo-2-test"; to_terminal=false, to_tensorboard=true)
+  nt = config.num_envs#Threads.nthreads()
+  Logger.make_logger("ppo-2-test"; to_terminal=false)
 
-  # env = MultiThreadEnv([CartPoleEnv(T=Float32, max_steps=500, rng=Xoshiro(i)) for i in 1:nt])  # TODO make env configurable through CLI
+  # TODO make env configurable through CLI
   env = MultiThreadEnv(nt) do
     seed = hash(Threads.threadid())
     CartPoleEnv(T=Float32, max_steps=500, rng=Xoshiro(seed))
@@ -83,7 +84,7 @@ function ppo(config::PPOConfig=PPOConfig())
     state=Float32.(rand(state_space(env))),
     action=Float32.(rand(action_space(env))),
     logprob=Float32.(ones(nt)),
-    reward=Float32.(ones(Float32, nt)),
+    reward=Float32.(ones(nt)),
     terminal=fill(true, nt),
     value=Float32.(ones(nt)),
   )
@@ -142,8 +143,8 @@ function ppo(config::PPOConfig=PPOConfig())
 
           # todo: would be nice if we could pass step instead of log_step_increment
           log_step_inc = last_log_step == 0 ? 0 : global_step - last_log_step
-
           @info "Episode Statistics" episode_return episode_length global_step steps_per_sec log_step_increment = log_step_inc
+
           episode_lengths[i] = 0
           episode_returns[i] = 0
           last_log_step = deepcopy(global_step)
@@ -153,8 +154,6 @@ function ppo(config::PPOConfig=PPOConfig())
       end
     end
 
-    # todo: this won't work because transitions are added 1 after the other
-    #  need to shape replay data as (batch, num_env, ...)
     # bootstrap value if not done
     next_obs = state(env)
     next_done = is_terminated(env)
@@ -167,11 +166,11 @@ function ppo(config::PPOConfig=PPOConfig())
       config.gamma,
       config.gae_lambda
     )
-    advantages = reduce(hcat, advantages)'
-    # advantages = hcat(advantages...)'
+    advantages = reduce(hcat, advantages)'  # stack
     returns = advantages + rb.data.value
 
     b_inds = 1:batch_size
+
 
     states = reshape(rb.data.state, :, batch_size)
     actions = reshape(rb.data.action, :, batch_size)
@@ -185,7 +184,9 @@ function ppo(config::PPOConfig=PPOConfig())
 
       params = Flux.params(actor, critic)
       for start in 1:minibatch_size:batch_size
-        pg_loss, v_loss, entropy_loss = 0.0, 0.0, 0.0
+        pg_loss = 0.0
+        v_loss = 0.0
+        entropy_loss = 0.0
 
         loss, gs = Flux.withgradient(params) do
           end_ind = start + minibatch_size - 1
@@ -198,6 +199,7 @@ function ppo(config::PPOConfig=PPOConfig())
           mb_values = @view values[mb_inds]
           mb_returns = @view returns[mb_inds]
 
+          # @show typeof(mb_states) typeof(mb_actions) typeof(actor)
           newlogprob, entropy = logprob_actions(mb_states, actor, mb_actions)
           newvalue = critic(mb_states)
           newlogprob = vec(newlogprob)
@@ -233,6 +235,7 @@ function ppo(config::PPOConfig=PPOConfig())
 
         log_step_inc = last_log_step == 0 ? 0 : global_step - last_log_step
         # todo: log loss components
+        log_step_inc = last_log_step == 0 ? 0 : global_step - last_log_step
         @info "Training Statistics" loss pg_loss v_loss entropy_loss log_step_increment = log_step_inc
         last_log_step = deepcopy(global_step)
 
@@ -242,4 +245,5 @@ function ppo(config::PPOConfig=PPOConfig())
     # Buffer.clear!(rb)
   end
 end
+
 

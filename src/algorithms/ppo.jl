@@ -31,7 +31,7 @@ function get_action(obs::AbstractVecOrMat{Float32}, actor::Chain)
   action, logprob_action
 end
 
-function logprob_actions(obs::AbstractVecOrMat{Float32}, actor::Chain, actions::AbstractVector)
+function logprob_actions(obs::AbstractVecOrMat{Float32}, actor::Chain, actions::AbstractVector{Int32})
   logits = actor(obs)
   probs = softmax(logits)
   logprobs = logsoftmax(logits)
@@ -73,7 +73,7 @@ function gae(values::AbstractVector{T}, rewards::AbstractVector{T}, terminals::A
 end
 
 function ppo(config::PPOConfig=PPOConfig())
-  nt = config.num_envs#Threads.nthreads()
+  nt = config.num_envs
   Logger.make_logger("ppo-2-test"; to_terminal=false)
 
   # TODO make env configurable through CLI
@@ -127,8 +127,7 @@ function ppo(config::PPOConfig=PPOConfig())
       action, log_prob = get_action(next_obs, actor)
       value = critic(next_obs)
 
-      # step env
-      env(action)
+      env(action) # step env
 
       rewards = reward(env)
       Buffer.add!(rb, (
@@ -181,15 +180,15 @@ function ppo(config::PPOConfig=PPOConfig())
     advantages = reduce(hcat, advantages)'  # stack
     returns = advantages + rb.data.value
 
-    b_inds = 1:batch_size
-
-
+    # flatten everything
     states = reshape(rb.data.state, :, batch_size)
     actions = reshape(rb.data.action, :, batch_size)
     logprobs = reshape(rb.data.logprob, :, batch_size)
     values = reshape(rb.data.value, :, batch_size)
     advantages = reshape(advantages, :, batch_size)
     returns = reshape(returns, :, batch_size)
+
+    b_inds = 1:batch_size
 
     for epoch in 1:config.update_epochs
       b_inds = shuffle(b_inds)
@@ -211,7 +210,6 @@ function ppo(config::PPOConfig=PPOConfig())
           mb_values = @view values[mb_inds]
           mb_returns = @view returns[mb_inds]
 
-          # @show typeof(mb_states) typeof(mb_actions) typeof(actor)
           newlogprob, entropy = logprob_actions(mb_states, actor, mb_actions)
           newvalue = critic(mb_states)
           newlogprob = vec(newlogprob)
@@ -246,16 +244,12 @@ function ppo(config::PPOConfig=PPOConfig())
         end
 
         log_step_inc = last_log_step == 0 ? 0 : global_step - last_log_step
-        # todo: log loss components
-        log_step_inc = last_log_step == 0 ? 0 : global_step - last_log_step
         @info "Training Statistics" loss pg_loss v_loss entropy_loss log_step_increment = log_step_inc
         last_log_step = deepcopy(global_step)
 
         Flux.Optimise.update!(opt, params, gs)
       end
     end
-    # Buffer.clear!(rb)
   end
 end
-
 

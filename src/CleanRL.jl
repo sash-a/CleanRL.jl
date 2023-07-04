@@ -4,11 +4,10 @@ using Base: Threads
 using Dates: now, format
 using Random: shuffle, Xoshiro
 
-# must be before using ReinforcementLearning for gym envs
+# must be before using ReinforcementLearning to load gym envs
 # using PyCall
-using ReinforcementLearning
 # using GridWorlds
-
+using ReinforcementLearning
 
 using Flux
 using Flux: Zygote

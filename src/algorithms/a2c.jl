@@ -51,10 +51,11 @@ function a2c(config::A2CConfig=A2CConfig())
   for global_step in 1:config.total_timesteps
     # state needs to be coppied otherwise each loop will overwrite ref in replay buffer
     obs = deepcopy(state(env))
-    ac_dist = Categorical(actor(obs))
+    probs = softmax(actor(obs))
+    ac_dist = Categorical(probs)
     action = rand(ac_dist)
 
-    env(action)
+    env(action)  # step env
 
     transition = (
       state=obs,
@@ -87,7 +88,9 @@ function a2c(config::A2CConfig=A2CConfig())
         # actor update
         actor_params = Flux.params(actor)
         actor_loss, actor_gs = Flux.withgradient(actor_params) do
-          ac_dists = data.state |> actor |> eachcol .|> d -> Categorical(d, check_args=false)
+          ac_probs = data.state |> actor |> softmax
+          ac_dists = Categorical.(eachcol(ac_probs), check_args=false)
+          # todo: grad of logpdf is slow, manually do logsoftmax.
           log_probs = logpdf.(ac_dists, vec(data.action))
           -mean(log_probs .* advantage)
         end

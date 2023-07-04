@@ -1,6 +1,6 @@
 module Logger
 
-using LoggingExtras: TeeLogger, FormatLogger, ConsoleLogger
+using LoggingExtras: TeeLogger, FormatLogger, ConsoleLogger, NullLogger
 using LoggingFormats: JSON
 using TensorBoardLogger: TBLogger
 
@@ -16,6 +16,10 @@ function make_logger(run_name; to_terminal=true, to_tensorboard=true, to_json=fa
   end
   if to_json
     push!(loggers, FormatLogger(JSON(), "logs/$(run_name).json"; append=true))
+  end
+
+  if isempty(loggers)
+    push!(loggers, NullLogger())
   end
 
   logger = TeeLogger(loggers...)

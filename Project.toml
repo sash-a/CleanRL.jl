@@ -4,13 +4,18 @@ authors = ["Sasha Abramowitz <reallysasha@gmail.com>"]
 version = "0.1.0"
 
 [deps]
+ArcadeLearningEnvironment = "b7f77d8d-088d-5e02-8ac0-89aab2acc977"
 ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+EllipsisNotation = "da5c29d0-fa7d-589e-88eb-ea29b0a81949"
 Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
+GridWorlds = "e15a9946-cd7f-4d03-83e2-6c30bacb0043"
 LoggingExtras = "e6f89c97-d47a-5376-807f-9c37f3926c36"
 LoggingFormats = "98105f81-4425-4516-93fd-1664fb551ab6"
+MacroTools = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
 OhMyREPL = "5fb14364-9ced-5910-84b2-373655c76a03"
 ProfileView = "c46f51b8-102a-5cf2-8d2c-8597cb0e0da7"
 PyCall = "438e738f-606a-5dbb-bf0a-cddfbfd45ab0"

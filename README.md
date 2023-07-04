@@ -16,11 +16,13 @@ Inspired by [CleanRL](https://github.com/vwxyzjn/cleanrl)
 * ~~CLI for hyperparameters~~
 * ~~Support loggers~~
 * GPU training
+* ~~Multi-thread PPO~~
 * Vectorized envs
 * ~~Plotting~~
 * ~~Multi-loggers (file/console/Tensorboard)~~
-* Make nn inputs F32 - F32 env wrapper?
+* ~~Make nn inputs F32 - F32 env wrapper?~~ - done for PPO
 * Make individual file runners e.g experiments/run_ppo.(jl/sh)
+* Better logging - log interval and always log at correct step
 
 ## TODO (Investigate):
 * Profile PPO

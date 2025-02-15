@@ -4,6 +4,8 @@ export MultiThreadEnv
 
 using Base.Threads: @spawn
 using MacroTools
+using ReinforcementLearningBase
+using ReinforcementLearningCore
 """
     MultiThreadEnv(envs::Vector{<:AbstractEnv})
 

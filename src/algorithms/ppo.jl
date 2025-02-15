@@ -1,4 +1,6 @@
 @kwdef struct PPOConfig
+  seed::Int = 42
+
   total_timesteps::Int = 500_000
   num_steps::Int = 32
   num_envs::Int = 4
@@ -77,13 +79,14 @@ function ppo(config::PPOConfig=PPOConfig())
   Logger.make_logger("ppo-2-test"; to_terminal=false)
 
   # TODO make env configurable through CLI
-  env = MultiThreadEnv(nt) do
-    seed = hash(Threads.threadid())
-    CartPoleEnv(T=Float32, max_steps=500, rng=Xoshiro(seed))
-  end
+  # env = MultiThreadEnv(nt) do
+  #   seed = hash(Threads.threadid())
+  #   CartPoleEnv(T=Float32, max_steps=500, rng=Xoshiro(seed))
+  # end
+  env = CartPoleEnv(T=Float32, max_steps=500, rng=Xoshiro(config.seed))
 
-  single_obs_space = single_state_space(env)
-  single_act_space = single_action_space(env)
+  single_obs_space = state_space(env)
+  single_act_space = action_space(env)
   actor, critic = Networks.make_actor_critic(single_act_space, single_obs_space) .|> Flux.f32
 
   batch_size = config.num_steps * nt
@@ -115,10 +118,10 @@ function ppo(config::PPOConfig=PPOConfig())
   next_done = is_terminated(env)
 
   for update in 1:num_updates
-    if config.anneal_lr
-      frac = 1.0 - (update - 1.0) / num_updates
-      opt.os[2].eta = frac * config.lr
-    end
+    # if config.anneal_lr
+    #   frac = 1.0 - (update - 1.0) / num_updates
+    #   opt.os[2].eta = frac * config.lr
+    # end
 
     for step in 1:config.num_steps
       global_step += nt

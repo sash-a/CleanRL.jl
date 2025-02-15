@@ -34,8 +34,9 @@ function make_actor_critic_shared(env::AbstractEnv, hidden_sizes::Vector{Int}=In
 end
 
 function make_actor_critic(action_space, obs_space, hidden_sizes::Vector{Int}=Int[64, 64])
-  in_size = length(obs_space)
-  out_size = length(action_space)
+  @show action_space obs_space
+  in_size = 4  # TODO: not sure how to do this DomainSets: length(obs_space)
+  out_size = 2  # length(action_space)
 
   actor_final_gain = Flux.orthogonal(; gain=0.01)
   critic_final_gain = Flux.orthogonal(; gain=1.0)
